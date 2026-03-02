@@ -1,0 +1,6 @@
+{
+  "name": "circuit_architect",
+  "description": "Consumes the JSON spec and generates production-ready Qiskit 1.x code.",
+  "version": "1.0.0",
+  "framework": "antigravity"
+}

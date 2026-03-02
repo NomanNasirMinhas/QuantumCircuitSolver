@@ -1,0 +1,6 @@
+{
+  "name": "media_producer",
+  "description": "Converts technical gate logic into cinematic visual prompts for Google Veo and Imagen 3.",
+  "version": "1.0.0",
+  "framework": "antigravity"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "evaluator_agent",
+  "description": "Performs simulation and output validation of quantum algorithms.",
+  "version": "1.0.0",
+  "framework": "antigravity"
+}

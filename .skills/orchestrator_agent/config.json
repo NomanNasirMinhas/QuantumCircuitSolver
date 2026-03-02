@@ -1,0 +1,6 @@
+{
+  "name": "orchestrator_agent",
+  "description": "Entry point for Gemini Live taking bidirectional audio/text to route to sub-agents and maintain global state.",
+  "version": "1.0.0",
+  "framework": "antigravity"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "quantum_translator",
+  "description": "Maps plain text/voice to a Quantum Algorithm and outputs a JSON mathematical spec.",
+  "version": "1.0.0",
+  "framework": "antigravity"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "quantum_scientist",
+  "description": "Audits the code against Vertex AI Search grounding for scientific accuracy.",
+  "version": "1.0.0",
+  "framework": "antigravity"
+}
