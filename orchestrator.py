@@ -29,6 +29,7 @@ class QuantumOrchestrator:
         print(f"--- Starting Quantum Workflow for: '{user_input}' ---")
         
         # STEP 1: TRANSLATION (Plain Text -> Quantum Mapping)
+        time.sleep(2)  # Pause to avoid Gemini API rate limits
         mapping = self.translator.map_problem(user_input)
         
         if 'error' in mapping:
@@ -50,6 +51,7 @@ class QuantumOrchestrator:
             print(f"[2] Architecture Attempt {attempt}...")
             
             # Generate Qiskit Code
+            time.sleep(5)  # Pause to avoid rate limit
             code_package = self.architect.generate_code(mapping, feedback=scientific_report)
             if 'error' in code_package:
                 print(f"[!] Architect error: {code_package['error']}")
@@ -59,6 +61,7 @@ class QuantumOrchestrator:
             
             # STEP 3: SCIENTIFIC AUDIT (The Scientist Agent)
             print(f"[3] Scientist Agent auditing code...")
+            time.sleep(5)  # Pause to avoid rate limit
             scientific_report = self.scientist.validate_proposal(mapping, python_code)
             
             decision = scientific_report.get('decision', 'REJECTED')
@@ -68,6 +71,7 @@ class QuantumOrchestrator:
                 
                 # STEP 4: EVALUATOR AUDIT
                 print(f"[4] Evaluator Agent performing final validation...")
+                time.sleep(5)  # Pause to avoid rate limit
                 # Mock simulation results for validation
                 dummy_results = {"status": "COMPLETED", "histogram": {"00": 0.1, "11": 0.9}}
                 evaluator_report = self.evaluator.evaluate_simulation(python_code, dummy_results)
@@ -90,6 +94,7 @@ class QuantumOrchestrator:
 
         # STEP 5: MEDIA PRODUCTION (Visuals & Narratives)
         print(f"[5] Media Producer generating cinematic assets...")
+        time.sleep(5)  # Pause to avoid rate limit
         visual_brief = self.media_producer.generate_visuals(mapping, validated_code.get('python_code', validated_code.get('code', '')))
 
         # FINAL OUTPUT ASSEMBLY
@@ -122,4 +127,4 @@ def on_user_voice_input(voice_text):
     print(json.dumps(result, indent=2))
 
 if __name__ == "__main__":
-    on_user_voice_input("I want to find a specific person in a huge crowd using a quantum computer.")
+    on_user_voice_input("I have 200 computers in my network and I want to find the lowest effort path for an attacker to break into my network.")
