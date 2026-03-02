@@ -1,6 +1,11 @@
 import json
 import time
+import os
+from dotenv import load_dotenv
 from typing import Dict, Any, List
+
+# Load environment variables from .env file
+load_dotenv()
 
 from quantum_translator_agent import TranslatorAgent
 from circuit_architect_agent import ArchitectAgent
