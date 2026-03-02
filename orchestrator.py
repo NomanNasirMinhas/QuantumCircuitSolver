@@ -1,6 +1,8 @@
 import json
 import time
 import os
+import subprocess
+import ast
 from dotenv import load_dotenv
 from typing import Dict, Any, List
 
@@ -72,9 +74,53 @@ class QuantumOrchestrator:
                 # STEP 4: EVALUATOR AUDIT
                 print(f"[4] Evaluator Agent performing final validation...")
                 time.sleep(5)  # Pause to avoid rate limit
-                # Mock simulation results for validation
-                dummy_results = {"status": "COMPLETED", "histogram": {"00": 0.1, "11": 0.9}}
-                evaluator_report = self.evaluator.evaluate_simulation(python_code, dummy_results)
+                
+                # Execute the Qiskit code locally to get actual simulation results
+                print("    [*] Executing Qiskit code to generate simulation results...")
+                actual_results = {"status": "FAILED", "histogram": {}}
+                
+                try:
+                    with open("temp_circuit.py", "w") as f:
+                        f.write(python_code)
+                    
+                    # Run the script and capture stdout
+                    import sys # Ensure python executable is correct
+                    python_exe = sys.executable 
+                    # If we are in a venv, sys.executable is the venv python.
+                    
+                    result = subprocess.run([python_exe, "temp_circuit.py"], capture_output=True, text=True, timeout=60)
+                    
+                    if result.returncode == 0:
+                        actual_results["status"] = "COMPLETED"
+                        # Simple extraction: find the last printed dictionary (the histogram)
+                        output = result.stdout.strip()
+                        try:
+                            # Try to extract the dictionary like {"0000": 100, "1111": 924}
+                            dict_str_start = output.rfind('{')
+                            dict_str_end = output.rfind('}')
+                            if dict_str_start != -1 and dict_str_end != -1 and dict_str_end > dict_str_start:
+                                dict_str = output[dict_str_start:dict_str_end+1]
+                                # Evaluate safely
+                                parsed = ast.literal_eval(dict_str)
+                                if isinstance(parsed, dict):
+                                    actual_results["histogram"] = parsed
+                                else:
+                                    actual_results["raw_output"] = output
+                            else:
+                                actual_results["raw_output"] = output
+                        except Exception as parse_e:
+                            actual_results["raw_output"] = output
+                    else:
+                        actual_results["error"] = result.stderr.strip().split('\n')[-3:] # Capture last 3 lines
+                        print(f"    [!] Code execution failed: {actual_results['error']}")
+                except Exception as e:
+                    actual_results["error"] = str(e)
+                    print(f"    [!] Error running code: {e}")
+                finally:
+                    if os.path.exists("temp_circuit.py"):
+                        os.remove("temp_circuit.py")
+
+                evaluator_report = self.evaluator.evaluate_simulation(python_code, actual_results)
                 
                 verdict = evaluator_report.get('verdict', 'FAIL')
                 if verdict == 'PASS':
