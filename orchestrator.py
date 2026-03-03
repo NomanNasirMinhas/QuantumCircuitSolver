@@ -22,27 +22,24 @@ class QuantumOrchestrator:
         self.scientist = ScientistAgent()
         self.evaluator = EvaluatorAgent()
         self.media_producer = MediaProducerAgent()
-        
-        # Internal state to track the conversation
-        self.session_history = []
         self.max_retries = 3
 
-    def run_workflow(self, user_input: str) -> Dict[str, Any]:
-        print(f"--- Starting Quantum Workflow for: '{user_input}' ---")
+    async def run_workflow(self, user_input: str, event_callback) -> Dict[str, Any]:
+        await event_callback({"type": "progress", "agent": "Orchestrator", "status": f"Starting Quantum Workflow for: '{user_input}'"})
         
         # STEP 1: TRANSLATION (Plain Text -> Quantum Mapping)
-        time.sleep(2)  # Pause to avoid Gemini API rate limits
+        await event_callback({"type": "progress", "agent": "Translator", "status": "Translating natural language to quantum problem mapping..."})
+        time.sleep(2)
         mapping = self.translator.map_problem(user_input)
         
         if 'error' in mapping:
+             await event_callback({"type": "error", "agent": "Translator", "status": "Translation failed", "details": mapping})
              return {"error": "Translation failed", "details": mapping}
              
-        # Fallbacks if keys are slightly different
         algo = mapping.get('identified_algorithm', mapping.get('algorithm', 'Unknown'))
-        
-        print(f"[1] Problem mapped to: {algo}")
+        await event_callback({"type": "success", "agent": "Translator", "status": f"Problem mapped to: {algo}"})
 
-        # STEP 2: ARCHITECTURE & VALIDATION LOOP (The Self-Healing Core)
+        # STEP 2: ARCHITECTURE & VALIDATION LOOP
         attempt = 0
         validated_code = None
         scientific_report = None
@@ -50,57 +47,49 @@ class QuantumOrchestrator:
 
         while attempt < self.max_retries:
             attempt += 1
-            print(f"[2] Architecture Attempt {attempt}...")
+            await event_callback({"type": "progress", "agent": "Architect", "status": f"Architecture Generation (Attempt {attempt})..."})
             
-            # Generate Qiskit Code
-            time.sleep(5)  # Pause to avoid rate limit
+            time.sleep(5)
             code_package = self.architect.generate_code(mapping, feedback=scientific_report)
             if 'error' in code_package:
-                print(f"[!] Architect error: {code_package['error']}")
+                await event_callback({"type": "error", "agent": "Architect", "status": f"Architect error: {code_package['error']}"})
                 continue
                 
             python_code = code_package.get('python_code', code_package.get('code', ''))
+            await event_callback({"type": "success", "agent": "Architect", "status": "Circuit generated successfully."})
             
-            # STEP 3: SCIENTIFIC AUDIT (The Scientist Agent)
-            print(f"[3] Scientist Agent auditing code...")
-            time.sleep(5)  # Pause to avoid rate limit
+            # STEP 3: SCIENTIFIC AUDIT
+            await event_callback({"type": "progress", "agent": "Scientist", "status": "Auditing proposed quantum circuit..."})
+            time.sleep(5)
             scientific_report = self.scientist.validate_proposal(mapping, python_code)
             
             decision = scientific_report.get('decision', 'REJECTED')
             
             if decision == "APPROVED":
-                print(">>> SUCCESS: Scientific Validation Passed.")
+                await event_callback({"type": "success", "agent": "Scientist", "status": "Scientific validation passed."})
                 
                 # STEP 4: EVALUATOR AUDIT
-                print(f"[4] Evaluator Agent performing final validation...")
-                time.sleep(5)  # Pause to avoid rate limit
+                await event_callback({"type": "progress", "agent": "Evaluator", "status": "Running local simulation & final evaluation..."})
+                time.sleep(5)
                 
-                # Execute the Qiskit code locally to get actual simulation results
-                print("    [*] Executing Qiskit code to generate simulation results...")
                 actual_results = {"status": "FAILED", "histogram": {}}
                 
                 try:
                     with open("temp_circuit.py", "w") as f:
                         f.write(python_code)
                     
-                    # Run the script and capture stdout
-                    import sys # Ensure python executable is correct
+                    import sys
                     python_exe = sys.executable 
-                    # If we are in a venv, sys.executable is the venv python.
-                    
                     result = subprocess.run([python_exe, "temp_circuit.py"], capture_output=True, text=True, timeout=60)
                     
                     if result.returncode == 0:
                         actual_results["status"] = "COMPLETED"
-                        # Simple extraction: find the last printed dictionary (the histogram)
                         output = result.stdout.strip()
                         try:
-                            # Try to extract the dictionary like {"0000": 100, "1111": 924}
                             dict_str_start = output.rfind('{')
                             dict_str_end = output.rfind('}')
                             if dict_str_start != -1 and dict_str_end != -1 and dict_str_end > dict_str_start:
                                 dict_str = output[dict_str_start:dict_str_end+1]
-                                # Evaluate safely
                                 parsed = ast.literal_eval(dict_str)
                                 if isinstance(parsed, dict):
                                     actual_results["histogram"] = parsed
@@ -111,11 +100,11 @@ class QuantumOrchestrator:
                         except Exception as parse_e:
                             actual_results["raw_output"] = output
                     else:
-                        actual_results["error"] = result.stderr.strip().split('\n')[-3:] # Capture last 3 lines
-                        print(f"    [!] Code execution failed: {actual_results['error']}")
+                        actual_results["error"] = result.stderr.strip().split('\n')[-3:] 
+                        await event_callback({"type": "warning", "agent": "Environment", "status": f"Sim execution failed: {actual_results['error']}"})
                 except Exception as e:
                     actual_results["error"] = str(e)
-                    print(f"    [!] Error running code: {e}")
+                    await event_callback({"type": "warning", "agent": "Environment", "status": f"Code run hit error: {e}"})
                 finally:
                     if os.path.exists("temp_circuit.py"):
                         os.remove("temp_circuit.py")
@@ -125,23 +114,26 @@ class QuantumOrchestrator:
                 verdict = evaluator_report.get('verdict', 'FAIL')
                 if verdict == 'PASS':
                     validated_code = code_package
-                    print(">>> SUCCESS: Evaluator Validation Passed.")
+                    await event_callback({"type": "success", "agent": "Evaluator", "status": "Evaluator Validation Passed."})
                     break
                 else:
-                    print(f">>> FAIL: Evaluator rejected code. Reason: {evaluator_report.get('validation_summary', '')}")
-                    # Feed evaluator feedback back to architect in loop (as 'scientific_report' to reuse the feedback variable)
+                    reason = evaluator_report.get('validation_summary', '')
+                    await event_callback({"type": "error", "agent": "Evaluator", "status": f"Rejected. Reason: {reason}"})
                     scientific_report = {"decision": "REJECTED", "architect_feedback": evaluator_report.get('feedback_for_agents', 'Syntax or logic error.')}
             else:
                 feedback = scientific_report.get('architect_feedback', scientific_report.get('feedback', 'No detailed feedback'))
-                print(f">>> FAIL: Scientist rejected code. Reason: {feedback}")
+                await event_callback({"type": "error", "agent": "Scientist", "status": f"Rejected. Reason: {feedback}"})
 
         if not validated_code:
+            await event_callback({"type": "error", "agent": "Orchestrator", "status": "Could not generate a scientifically valid circuit after 3 attempts."})
             return {"error": "Could not generate a scientifically valid circuit after 3 attempts."}
 
-        # STEP 5: MEDIA PRODUCTION (Visuals & Narratives)
-        print(f"[5] Media Producer generating cinematic assets...")
-        time.sleep(5)  # Pause to avoid rate limit
+        # STEP 5: MEDIA PRODUCTION
+        await event_callback({"type": "progress", "agent": "MediaProducer", "status": "Generating multi-modal narrative and visual briefs..."})
+        time.sleep(5)
         visual_brief = self.media_producer.generate_visuals(mapping, validated_code.get('python_code', validated_code.get('code', '')))
+        
+        await event_callback({"type": "success", "agent": "MediaProducer", "status": "Cinematic visual assets generated."})
 
         # FINAL OUTPUT ASSEMBLY
         final_package = {
@@ -158,19 +150,47 @@ class QuantumOrchestrator:
             "audio_narration": visual_brief.get('audio_script', '')
         }
 
+        await event_callback({"type": "complete", "agent": "Orchestrator", "status": "Final Multimodal Package Ready!", "data": final_package})
         return final_package
 
-# --- GEMINI LIVE INTEGRATION MOCK ---
-def on_user_voice_input(voice_text):
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def read_root():
+    return {"message": "Quantum Orchestrator API is Live"}
+
+@app.websocket("/ws/simulate")
+async def websocket_simulate(websocket: WebSocket):
+    await websocket.accept()
     orchestrator = QuantumOrchestrator()
-    result = orchestrator.run_workflow(voice_text)
-    
-    # In a real app, you would now:
-    # 1. Play 'audio_narration' via Gemini Live TTS.
-    # 2. Trigger Veo/Imagen APIs using the generated prompts.
-    # 3. Display the Qiskit code in the UI terminal.
-    print("\n--- FINAL MULTIMODAL PACKAGE READY ---")
-    print(json.dumps(result, indent=2))
+    try:
+        data = await websocket.receive_text()
+        
+        async def send_event_to_ws(event: dict):
+            await websocket.send_json(event)
+            # Yield control occasionally so WS buffer flushes
+            await asyncio.sleep(0.1)
+
+        result = await orchestrator.run_workflow(data, send_event_to_ws)
+        
+    except WebSocketDisconnect:
+        print("Client disconnected.")
+    except Exception as e:
+        print(f"Error during simulation: {e}")
+        await websocket.send_json({"type": "fatal", "agent": "Server", "status": str(e)})
 
 if __name__ == "__main__":
-    on_user_voice_input("I have 200 computers in my network and I want to find the lowest effort path for an attacker to break into my network.")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
