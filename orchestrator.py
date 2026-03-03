@@ -119,7 +119,9 @@ class QuantumOrchestrator:
                 else:
                     reason = evaluator_report.get('validation_summary', '')
                     await event_callback({"type": "error", "agent": "Evaluator", "status": f"Rejected. Reason: {reason}"})
-                    scientific_report = {"decision": "REJECTED", "architect_feedback": evaluator_report.get('feedback_for_agents', 'Syntax or logic error.')}
+                    # Pass only the specific fix string - not the full report - to keep the retry prompt lean
+                    fix_instructions = evaluator_report.get('feedback_for_agents', 'Syntax or logic error detected. Review and fix the circuit.')
+                    scientific_report = {"decision": "REJECTED", "architect_feedback": fix_instructions}
             else:
                 feedback = scientific_report.get('architect_feedback', scientific_report.get('feedback', 'No detailed feedback'))
                 await event_callback({"type": "error", "agent": "Scientist", "status": f"Rejected. Reason: {feedback}"})
