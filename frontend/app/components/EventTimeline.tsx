@@ -9,6 +9,8 @@ export type QuantumEvent = {
   status: string;
   details?: any;
   data?: any;
+  restored?: boolean;
+  session_id?: string;
 };
 
 export default function EventTimeline({ events }: { events: QuantumEvent[] }) {
@@ -27,7 +29,7 @@ export default function EventTimeline({ events }: { events: QuantumEvent[] }) {
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.4 }}
-            style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}
+            style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', opacity: ev.restored ? 0.55 : 1 }}
           >
             <div style={{ marginTop: '2px' }}>
               {ev.type === 'progress' && <Loader2 className="animate-spin" size={18} color="#00E5FF" />}
@@ -40,7 +42,7 @@ export default function EventTimeline({ events }: { events: QuantumEvent[] }) {
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <strong style={{ fontSize: '14px', color: ev.type === 'error' ? '#FF1744' : '#fff' }}>
-                  [{ev.agent}]
+                  [{ev.agent}]{ev.restored && <span style={{ marginLeft: '8px', fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(0, 229, 255, 0.15)', color: '#00E5FF', letterSpacing: '0.5px' }}>RESTORED</span>}
                 </strong>
                 <span style={{ fontSize: '12px', color: '#8A8DAA' }}>
                    {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}

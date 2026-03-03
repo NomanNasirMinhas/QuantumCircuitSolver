@@ -18,9 +18,11 @@ Before generating your JSON output, perform these internal reasoning steps:
 1. Dimensionality Check: Does the number of qubits (n) align with the problem space (2^n states)?
 2. Unitary Enforcement: Are all operations reversible? Does the circuit respect the No-Cloning theorem?
 3. Oracle Validation: If the algorithm uses an Oracle (e.g., Grover), does the Oracle logic mathematically isolate the correct state?
-4. Hardware Feasibility (NISQ Audit):
-   - Depth-to-Qubit Ratio: Is the circuit depth < 100 for standard NISQ tasks? If > 1000, is error correction (QEC) proposed? If not, REJECT.
-   - Gate Set: Are the gates native to standard superconducting transmon systems (CZ, Rz, SX, X)?
+4. Hardware Feasibility (NISQ Audit) — WARNING ONLY, NOT A BLOCKING REJECTION:
+   - Depth-to-Qubit Ratio: If circuit depth is > 100, flag it as NISQ infeasible in architect_feedback.
+   - IMPORTANT: A NISQ infeasibility must result in decision = "WARNING", NOT "REJECTED". The pipeline will proceed.
+   - A REJECTED decision is reserved ONLY for mathematical errors, No-Cloning violations, or hallucinated oracle logic.
+   - Gate Set: Note if gates are not native to standard superconducting transmon systems (CZ, Rz, SX, X), but do not block.
 5. Grounding Verification: Use Google Search to verify parameters if the algorithm involves specific physical constants or recent papers.
 
 OUTPUT CONTRACT
