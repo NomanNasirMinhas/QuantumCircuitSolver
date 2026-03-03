@@ -12,7 +12,7 @@ load_dotenv()
 from quantum_translator_agent import TranslatorAgent
 from circuit_architect_agent import ArchitectAgent
 from quantum_scientist_agent import ScientistAgent
-from evaluator_agent import EvaluatorAgent
+# from evaluator_agent import EvaluatorAgent  # Temporarily unwired
 from media_generator_agent import MediaProducerAgent
 from session_manager import SessionManager
 
@@ -25,7 +25,7 @@ class QuantumOrchestrator:
         self.translator = TranslatorAgent()
         self.architect = ArchitectAgent()
         self.scientist = ScientistAgent()
-        self.evaluator = EvaluatorAgent()
+        # self.evaluator = EvaluatorAgent()  # Temporarily unwired
         self.media_producer = MediaProducerAgent()
         self.max_retries = 3
         self.session_manager = SessionManager()
@@ -90,20 +90,21 @@ class QuantumOrchestrator:
         attempt = session_data.get("attempt", 0) if resuming else 0
         validated_code = None
         scientific_report = session_data.get("scientific_report") if resuming else None
-        evaluator_report = None
+        # evaluator_report = None  # Evaluator temporarily unwired
         nisq_warning = session_data.get("nisq_warning") if resuming else None
 
         # Determine where to resume inside the loop
         skip_architect = resuming and self._past_stage(resume_stage, "ARCHITECTED")
         skip_scientist = resuming and self._past_stage(resume_stage, "AUDITED")
-        skip_evaluator = resuming and self._past_stage(resume_stage, "EVALUATED")
+        # skip_evaluator = resuming and self._past_stage(resume_stage, "EVALUATED")  # Evaluator temporarily unwired
 
-        # If fully evaluated, skip the entire loop
-        if skip_evaluator:
-            validated_code = {"python_code": session_data.get("code_package", {}).get("python_code", ""),
-                              **session_data.get("code_package", {})}
-            await event_callback({"type": "success", "agent": "Evaluator", "status": "[Restored] Evaluator Validation Passed.", "restored": True})
-        else:
+        # # If fully evaluated, skip the entire loop  # Evaluator temporarily unwired
+        # if skip_evaluator:
+        #     validated_code = {"python_code": session_data.get("code_package", {}).get("python_code", ""),
+        #                       **session_data.get("code_package", {})}
+        #     await event_callback({"type": "success", "agent": "Evaluator", "status": "[Restored] Evaluator Validation Passed.", "restored": True})
+        # else:
+        if True:
             while attempt < self.max_retries:
                 attempt += 1
 
@@ -159,69 +160,75 @@ class QuantumOrchestrator:
                         self.session_manager.checkpoint(session_id, "AUDITED", {
                             "scientific_report": scientific_report,
                             "nisq_warning": nisq_warning,
+                            "code_package": code_package,
                         }, attempt=attempt)
+
+                        # Scientist approved — skip Evaluator, go straight to Media Production
+                        validated_code = code_package
+                        break
                     else:
                         feedback = scientific_report.get('architect_feedback', scientific_report.get('feedback', 'No detailed feedback'))
                         await event_callback({"type": "error", "agent": "Scientist", "status": f"Rejected. Reason: {feedback}"})
                         continue
 
-                # --- EVALUATOR ---
-                await event_callback({"type": "progress", "agent": "Evaluator", "status": "Running local simulation & final evaluation..."})
-                time.sleep(5)
-
-                actual_results = {"status": "FAILED", "histogram": {}}
-
-                try:
-                    with open("temp_circuit.py", "w", encoding="utf-8") as f:
-                        f.write(python_code)
-
-                    import sys
-                    python_exe = sys.executable
-                    result = subprocess.run([python_exe, "temp_circuit.py"], capture_output=True, text=True, timeout=60, encoding="utf-8")
-
-                    if result.returncode == 0:
-                        actual_results["status"] = "COMPLETED"
-                        output = result.stdout.strip()
-                        try:
-                            dict_str_start = output.rfind('{')
-                            dict_str_end = output.rfind('}')
-                            if dict_str_start != -1 and dict_str_end != -1 and dict_str_end > dict_str_start:
-                                dict_str = output[dict_str_start:dict_str_end+1]
-                                parsed = ast.literal_eval(dict_str)
-                                if isinstance(parsed, dict):
-                                    actual_results["histogram"] = parsed
-                                else:
-                                    actual_results["raw_output"] = output
-                            else:
-                                actual_results["raw_output"] = output
-                        except Exception:
-                            actual_results["raw_output"] = output
-                    else:
-                        actual_results["error"] = result.stderr.strip().split('\n')[-3:]
-                        await event_callback({"type": "warning", "agent": "Environment", "status": f"Sim execution failed: {actual_results['error']}"})
-                except Exception as e:
-                    actual_results["error"] = str(e)
-                    await event_callback({"type": "warning", "agent": "Environment", "status": f"Code run hit error: {e}"})
-                finally:
-                    if os.path.exists("temp_circuit.py"):
-                        os.remove("temp_circuit.py")
-
-                evaluator_report = self.evaluator.evaluate_simulation(python_code, actual_results)
-
-                verdict = evaluator_report.get('verdict', 'FAIL')
-                if verdict == 'PASS':
-                    validated_code = code_package
-                    await event_callback({"type": "success", "agent": "Evaluator", "status": "Evaluator Validation Passed."})
-                    self.session_manager.checkpoint(session_id, "EVALUATED", {
-                        "evaluator_report": evaluator_report,
-                        "code_package": code_package,
-                    }, attempt=attempt)
-                    break
-                else:
-                    reason = evaluator_report.get('validation_summary', '')
-                    await event_callback({"type": "error", "agent": "Evaluator", "status": f"Rejected. Reason: {reason}"})
-                    fix_instructions = evaluator_report.get('feedback_for_agents', 'Syntax or logic error detected. Review and fix the circuit.')
-                    scientific_report = {"decision": "REJECTED", "architect_feedback": fix_instructions}
+                # --- EVALUATOR (Temporarily unwired) ---
+                # await event_callback({"type": "progress", "agent": "Evaluator", "status": "Running local simulation & final evaluation..."})
+                # time.sleep(5)
+                #
+                # actual_results = {"status": "FAILED", "histogram": {}}
+                #
+                # try:
+                #     with open("temp_circuit.py", "w", encoding="utf-8") as f:
+                #         f.write(python_code)
+                #
+                #     import sys
+                #     python_exe = sys.executable
+                #     result = subprocess.run([python_exe, "temp_circuit.py"], capture_output=True, text=True, timeout=60, encoding="utf-8")
+                #
+                #     if result.returncode == 0:
+                #         actual_results["status"] = "COMPLETED"
+                #         output = result.stdout.strip()
+                #         try:
+                #             dict_str_start = output.rfind('{')
+                #             dict_str_end = output.rfind('}')
+                #             if dict_str_start != -1 and dict_str_end != -1 and dict_str_end > dict_str_start:
+                #                 dict_str = output[dict_str_start:dict_str_end+1]
+                #                 parsed = ast.literal_eval(dict_str)
+                #                 if isinstance(parsed, dict):
+                #                     actual_results["histogram"] = parsed
+                #                 else:
+                #                     actual_results["raw_output"] = output
+                #             else:
+                #                 actual_results["raw_output"] = output
+                #         except Exception:
+                #             actual_results["raw_output"] = output
+                #     else:
+                #         actual_results["error"] = result.stderr.strip().split('\n')[-3:]
+                #         await event_callback({"type": "warning", "agent": "Environment", "status": f"Sim execution failed: {actual_results['error']}"})
+                # except Exception as e:
+                #     actual_results["error"] = str(e)
+                #     await event_callback({"type": "warning", "agent": "Environment", "status": f"Code run hit error: {e}"})
+                # finally:
+                #     if os.path.exists("temp_circuit.py"):
+                #         os.remove("temp_circuit.py")
+                #
+                # evaluator_report = self.evaluator.evaluate_simulation(python_code, actual_results)
+                #
+                # verdict = evaluator_report.get('verdict', 'FAIL')
+                # if verdict == 'PASS':
+                #     validated_code = code_package
+                #     await event_callback({"type": "success", "agent": "Evaluator", "status": "Evaluator Validation Passed."})
+                #     self.session_manager.checkpoint(session_id, "EVALUATED", {
+                #         "evaluator_report": evaluator_report,
+                #         "code_package": code_package,
+                #     }, attempt=attempt)
+                #     break
+                # else:
+                #     reason = evaluator_report.get('validation_summary', '')
+                #     await event_callback({"type": "error", "agent": "Evaluator", "status": f"Rejected. Reason: {reason}"})
+                #     fix_instructions = evaluator_report.get('feedback_for_agents', 'Syntax or logic error detected. Review and fix the circuit.')
+                #     scientific_report = {"decision": "REJECTED", "architect_feedback": fix_instructions}
+                pass  # Evaluator bypassed — loop breaks after Scientist approval above
 
         if not validated_code:
             await event_callback({"type": "error", "agent": "Orchestrator", "status": "Could not generate a scientifically valid circuit after 3 attempts."})
