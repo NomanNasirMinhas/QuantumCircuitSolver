@@ -36,7 +36,8 @@ class MediaProducerAgent:
     def __init__(self):
         self.client = genai.Client(
             vertexai=True,
-            api_key=os.environ.get("GOOGLE_CLOUD_API_KEY")
+            project=os.environ.get("GCP_PROJECT_ID"),
+            location="global",
         )
         self.model = "gemini-3.1-flash-lite-preview"
 
@@ -73,6 +74,8 @@ class MediaProducerAgent:
         )
 
         try:
+            if not response.text:
+                return {"error": "Empty response from API (possibly safety blocked or resource exhausted).", "raw_output": str(response)}
             return json.loads(response.text)
-        except json.JSONDecodeError:
-            return {"error": "Media agent failed to return JSON", "raw_output": response.text}
+        except Exception as e:
+            return {"error": f"Media agent failed to return JSON: {str(e)}", "raw_output": getattr(response, 'text', str(response))}

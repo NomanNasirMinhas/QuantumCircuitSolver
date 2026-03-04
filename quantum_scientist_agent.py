@@ -61,7 +61,8 @@ class ScientistAgent:
     def __init__(self):
         self.client = genai.Client(
             vertexai=True,
-            api_key=os.environ.get("GOOGLE_CLOUD_API_KEY")
+            project=os.environ.get("GCP_PROJECT_ID"),
+            location="global",
         )
         self.model = "gemini-3.1-flash-lite-preview"
 
@@ -105,6 +106,8 @@ Use Google Search to verify algorithm requirements. Ensure compliance with physi
         )
 
         try:
+            if not response.text:
+                return {"decision": "REJECTED", "architect_feedback": "Empty response from API (possibly safety blocked or resource exhausted)."}
             return json.loads(response.text)
-        except json.JSONDecodeError:
-            return {"decision": "REJECTED", "architect_feedback": "Scientist failed to output valid JSON. Output was: " + response.text}
+        except Exception as e:
+            return {"decision": "REJECTED", "architect_feedback": f"Scientist failed to output valid JSON. Error: {str(e)}"}

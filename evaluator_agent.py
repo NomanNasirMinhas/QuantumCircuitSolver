@@ -36,7 +36,8 @@ class EvaluatorAgent:
     def __init__(self):
         self.client = genai.Client(
             vertexai=True,
-            api_key=os.environ.get("GOOGLE_CLOUD_API_KEY")
+            project=os.environ.get("GCP_PROJECT_ID"),
+            location="global",
         )
         self.model = "gemini-3.1-flash-lite-preview"
 
@@ -73,6 +74,8 @@ class EvaluatorAgent:
         )
 
         try:
+            if not response.text:
+                return {"verdict": "FAIL", "validation_summary": "Empty response from API (possibly safety blocked or resource exhausted)."}
             return json.loads(response.text)
-        except json.JSONDecodeError:
-            return {"verdict": "FAIL", "validation_summary": "Evaluator failed to output valid JSON"}
+        except Exception as e:
+            return {"verdict": "FAIL", "validation_summary": f"Evaluator failed to output valid JSON: {str(e)}"}
