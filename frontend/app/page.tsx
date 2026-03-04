@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Terminal, Loader2, RotateCcw, X, Clock, Cpu } from 'lucide-react';
-import QuantumSphere from './components/QuantumSphere';
+import QuantumParticleField from './components/QuantumSphere';
 import EventTimeline, { QuantumEvent } from './components/EventTimeline';
 import MissionReport from './components/MissionReport';
 
@@ -154,7 +154,7 @@ export default function Home() {
         <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
           <ambientLight intensity={0.5} />
           <directionalLight position={[10, 10, 5]} intensity={1} />
-          <QuantumSphere state={status} />
+          <QuantumParticleField state={status} />
         </Canvas>
       </div>
 

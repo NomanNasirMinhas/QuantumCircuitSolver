@@ -42,12 +42,12 @@ function Section({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ borderRadius: '12px', border: `1px solid rgba(255,255,255,0.08)`, overflow: 'hidden' }}>
+    <div style={{ borderRadius: '12px', border: `1px solid rgba(255,255,255,0.08)`, overflow: 'hidden', background: 'rgba(20, 15, 40, 0.9)' }}>
       <button
         onClick={() => setOpen(o => !o)}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          background: 'rgba(255,255,255,0.04)', padding: '14px 20px', border: 'none',
+          background: 'rgba(20, 15, 40, 0.9)', padding: '14px 20px', border: 'none',
           cursor: 'pointer', color: '#fff'
         }}
       >
@@ -96,7 +96,8 @@ export default function MissionReport({ data }: { data: MissionData }) {
       {/* Header Banner */}
       <div className="glass-panel" style={{
         padding: '24px 32px', border: '1px solid rgba(0, 229, 255, 0.3)',
-        background: 'linear-gradient(135deg, rgba(0,229,255,0.06) 0%, rgba(213,0,249,0.04) 100%)'
+        background: 'linear-gradient(135deg, rgba(0,229,255,0.06) 0%, rgba(213,0,249,0.04) 100%)',
+        backgroundColor: 'rgba(20, 15, 40, 0.9)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
           <Cpu size={22} color="#00E5FF" />
@@ -121,7 +122,7 @@ export default function MissionReport({ data }: { data: MissionData }) {
       {data.nisq_warning && (
         <div className="glass-panel" style={{
           padding: '14px 20px', border: '1px solid rgba(255, 214, 0, 0.3)',
-          background: 'rgba(255, 214, 0, 0.05)', display: 'flex', alignItems: 'flex-start', gap: '12px'
+          background: 'rgba(20, 15, 40, 0.9)', display: 'flex', alignItems: 'flex-start', gap: '12px'
         }}>
           <AlertTriangle size={18} color="#FFD600" style={{ flexShrink: 0, marginTop: '2px' }} />
           <div>
@@ -144,7 +145,7 @@ export default function MissionReport({ data }: { data: MissionData }) {
           <CopyButton text={data.code} />
         </div>
         <pre style={{
-          background: '#0a0a1a', color: '#00E676', padding: '20px', borderRadius: '10px',
+          background: 'rgba(20, 15, 40, 0.9)', color: '#00E676', padding: '20px', borderRadius: '10px',
           overflowX: 'auto', fontFamily: '"Fira Code", "Cascadia Code", monospace', fontSize: '13px',
           lineHeight: '1.65', margin: 0, border: '1px solid rgba(0, 230, 118, 0.1)'
         }}>
@@ -156,7 +157,7 @@ export default function MissionReport({ data }: { data: MissionData }) {
       <Section icon={<Film size={16} />} label="Visual Media Brief" accentColor="#D500F9" defaultOpen={false}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {data.visuals?.video_prompt && (
-            <div style={{ background: 'rgba(213,0,249,0.07)', padding: '16px', borderRadius: '10px', border: '1px solid rgba(213,0,249,0.2)' }}>
+            <div style={{ background: 'rgba(20, 15, 40, 0.9)', padding: '16px', borderRadius: '10px', border: '1px solid rgba(213,0,249,0.2)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                 <p style={{ fontSize: '11px', color: '#D500F9', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: 0 }}>
                   🎬 Veo Video Prompt
@@ -167,7 +168,7 @@ export default function MissionReport({ data }: { data: MissionData }) {
             </div>
           )}
           {data.visuals?.image_prompt && (
-            <div style={{ background: 'rgba(0,229,255,0.05)', padding: '16px', borderRadius: '10px', border: '1px solid rgba(0,229,255,0.15)' }}>
+            <div style={{ background: 'rgba(20, 15, 40, 0.9)', padding: '16px', borderRadius: '10px', border: '1px solid rgba(0,229,255,0.15)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                 <p style={{ fontSize: '11px', color: '#00E5FF', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: 0 }}>
                   🖼 Imagen Concept Art Prompt
@@ -187,7 +188,7 @@ export default function MissionReport({ data }: { data: MissionData }) {
             <CopyButton text={data.audio_narration} />
           </div>
           <blockquote style={{
-            background: 'rgba(255,214,0,0.06)', padding: '20px 24px',
+            background: 'rgba(20, 15, 40, 0.9)', padding: '20px 24px',
             borderLeft: '4px solid #FFD600', borderRadius: '0 10px 10px 0',
             fontStyle: 'italic', color: '#fff', fontSize: '16px', lineHeight: '1.75', margin: 0
           }}>
