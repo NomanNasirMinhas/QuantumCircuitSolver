@@ -23,6 +23,8 @@ Always wrap your final mapping in the following JSON structure so the Circuit Ar
   "identified_algorithm": "[Algorithm Name]",
   "qubit_requirement_estimate": "[Integer]",
   "mathematical_justification": "[Brief technical explanation]",
+  "story_explanation": "[A highly detailed, podcast-style story tailored to the user's problem. Frame it for a complete non-quantum person, explaining how quantum approaches solve the problem using relatable metaphors corresponding to their specific problem domain.]",
+
   "target_gates": ["List of likely primary gates needed"],
   "quantum_state_description": "description of the quantum state"
 }

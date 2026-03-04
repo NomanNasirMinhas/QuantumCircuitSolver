@@ -18,9 +18,9 @@ Your output must be a structured JSON object:
 {
   "asset_type": "VIDEO | IMAGE | ANIMATION",
   "concept_focus": "e.g., Entanglement, Interference",
-  "veo_video_prompt": "Cinematic 4k video prompt...",
+  "veo_video_prompt": "Cinematic 4k video prompt specifically mapping the user's domain problem to a relatable real-world cinematic visual... do not be generic.",
   "imagen_graphic_prompt": "High-resolution 2D schematic prompt...",
-  "audio_script": "A 10-second narration script..."
+  "audio_script": "A 30-second podcast-style narration script explaining the problem domain and the quantum solution logic as a cohesive, relatable story to a non-quantum person..."
 }
 
 3. Style Guide
@@ -46,8 +46,9 @@ class MediaProducerAgent:
             "algorithm": mapping.get("identified_algorithm", "Unknown"),
             "problem_class": mapping.get("problem_class", "Unknown"),
             "qubit_count": mapping.get("qubit_requirement_estimate", "Unknown"),
+            "story_explanation": mapping.get("story_explanation", ""),
         }
-        prompt_text = f"Algorithm mapping:\n{json.dumps(algo_summary, indent=2)}\n\nPlease generate the visual assets and audio script."
+        prompt_text = f"Algorithm mapping with User Problem Context:\n{json.dumps(algo_summary, indent=2)}\n\nPlease generate the visual assets and audio script. IMPORANT: Make the video prompt and audio script exceptionally specific to the user's problem and the story_explanation provided. Return a relatable podcast-style story for the audio."
 
         contents = [
           types.Content(
@@ -60,7 +61,7 @@ class MediaProducerAgent:
           system_instruction=SYSTEM_INSTRUCTION,
           temperature=0.7,
           top_p=0.95,
-          max_output_tokens=1024,  # Visual briefs are short, cap aggressively
+          max_output_tokens=2048,  # Increased for longer podcast audio scripts
           response_mime_type="application/json",
           thinking_config=types.ThinkingConfig(thinking_budget=0),  # No thinking needed
         )

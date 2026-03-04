@@ -1,12 +1,15 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { Canvas } from '@react-three/fiber';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Terminal, Loader2, RotateCcw, X, Clock, Cpu } from 'lucide-react';
+import { Activity, BrainCircuit, Play, Terminal, XCircle, Lightbulb, Pause, Loader2, Send } from 'lucide-react';
 import QuantumParticleField from './components/QuantumSphere';
 import EventTimeline, { QuantumEvent } from './components/EventTimeline';
-import MissionReport from './components/MissionReport';
 
 type SessionSummary = {
   session_id: string;
@@ -17,29 +20,33 @@ type SessionSummary = {
   updated_at: string;
 };
 
+type FinalResultData = {
+  metadata?: { algorithm: string; qubits: number };
+  story_explanation?: string;
+  code?: string;
+  explanation?: string;
+  visuals?: {
+    video_prompt?: string;
+    circuit_diagram?: string; // base64 encoded image
+  };
+  audio_narration?: string; // base64 encoded audio
+  nisq_warning?: string;
+};
+
 export default function Home() {
   const [prompt, setPrompt] = useState('');
-  const [status, setStatus] = useState<'idle' | 'generating' | 'success' | 'error'>('idle');
+  const [isSimulating, setIsSimulating] = useState(false);
   const [events, setEvents] = useState<QuantumEvent[]>([]);
-  const [finalData, setFinalData] = useState<any>(null);
+  const [finalResult, setFinalResult] = useState<FinalResultData | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [showSessionPanel, setShowSessionPanel] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const eventsEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch saved sessions on mount
-  useEffect(() => {
-    fetchSessions();
-  }, []);
-
-  // Auto-scroll timeline
-  useEffect(() => {
-    if (eventsEndRef.current) {
-      eventsEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [events]);
+  // Audio Player State
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   const fetchSessions = async () => {
     try {
@@ -48,63 +55,72 @@ export default function Home() {
         const data = await res.json();
         setSessions(data);
       }
-    } catch {
-      // Backend not running, silently ignore
+    } catch (err) {
+      console.error('Failed to fetch sessions:', err);
     }
   };
 
+  useEffect(() => {
+    fetchSessions(); 
+  }, []);
+
+  // Auto-scroll timeline
+  useEffect(() => {
+    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [events]);
+
   const deleteSession = async (sessionId: string) => {
     try {
-      await fetch(`http://localhost:8000/sessions/${sessionId}`, { method: 'DELETE' });
-      setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
-    } catch {
-      // ignore
+      const res = await fetch(`http://localhost:8000/sessions/${sessionId}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchSessions();
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
     }
   };
 
   const startWorkflow = (userPrompt: string, sessionId: string | null = null) => {
-    if (status === 'generating') return;
+    if (isSimulating) return;
 
-    setStatus('generating');
+    setIsSimulating(true);
     setEvents([]);
-    setFinalData(null);
+    setFinalResult(null);
     setShowSessionPanel(false);
-    setActiveSessionId(sessionId);
+
+    // Stop and reset audio if playing
+    if (audioRef.current && isPlayingAudio) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setIsPlayingAudio(false);
+    }
 
     const ws = new WebSocket('ws://localhost:8000/ws/simulate');
     wsRef.current = ws;
 
     ws.onopen = () => {
-      if (sessionId) {
-        // Resume mode: send JSON payload
-        ws.send(JSON.stringify({ prompt: userPrompt, session_id: sessionId }));
-        setEvents([{ type: 'progress', agent: 'System', status: `Resuming session ${sessionId.slice(0, 8)}...` }]);
-      } else {
-        ws.send(userPrompt);
-        setEvents([{ type: 'progress', agent: 'System', status: 'WebSocket connected. Sending payload...' }]);
-      }
+      ws.send(JSON.stringify({ prompt: userPrompt, session_id: sessionId }));
     };
 
     ws.onmessage = (event) => {
       try {
         const data: QuantumEvent = JSON.parse(event.data);
-        setEvents((prev) => [...prev, data]);
 
-        // Capture session_id from backend if it sends one
-        if (data.session_id) {
-          setActiveSessionId(data.session_id);
-        }
+        // Filter out agent thinking trace logging
+        if (data.type === 'progress' && data.status.startsWith('T')) return;
 
         if (data.type === 'complete' && data.data) {
-          setFinalData(data.data);
-          setStatus('success');
-          setActiveSessionId(null);
+          setFinalResult(data.data as FinalResultData);
+          setIsSimulating(false);
           ws.close();
           fetchSessions(); // Refresh — completed sessions get cleaned up
-        } else if (data.type === 'fatal' || (data.type === 'error' && data.agent === 'Orchestrator')) {
-          setStatus('error');
+        } else if (data.type === 'fatal') {
+          setEvents((prev) => [...prev, data]);
+          setIsSimulating(false);
           ws.close();
           fetchSessions(); // A checkpoint may have been saved before the error
+        } else {
+          setEvents((prev) => [...prev, data]);
         }
       } catch (err) {
         console.error("Failed to parse WS message", err);
@@ -113,25 +129,20 @@ export default function Home() {
 
     ws.onerror = () => {
       setEvents((prev) => [...prev, { type: 'fatal', agent: 'Network', status: 'WebSocket connection error. Is the backend running?' }]);
-      setStatus('error');
+      setIsSimulating(false);
       fetchSessions();
     };
 
     ws.onclose = () => {
-      setStatus(prev => (prev === 'generating' ? 'error' : prev));
+      setIsSimulating(prev => (prev === true ? false : prev)); // If still simulating, set to false
       fetchSessions();
     };
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt.trim() || status === 'generating') return;
+    if (!prompt.trim() || isSimulating) return;
     startWorkflow(prompt);
-  };
-
-  const handleResume = (session: SessionSummary) => {
-    setPrompt(session.user_input);
-    startWorkflow(session.user_input, session.session_id);
   };
 
   const stageLabel = (stage: string) => {
@@ -146,6 +157,29 @@ export default function Home() {
     return labels[stage] || stage;
   };
 
+  const getStageColor = (stage: string) => {
+    const colors: Record<string, string> = {
+      CREATED: '#8A8DAA',
+      TRANSLATED: '#00E5FF',
+      ARCHITECTED: '#D500F9',
+      AUDITED: '#FFD600',
+      EVALUATED: '#00E5FF',
+      COMPLETED: '#00E5FF',
+    };
+    return colors[stage] || '#8A8DAA';
+  };
+
+  const handleAudioPlayPause = () => {
+    if (audioRef.current) {
+      if (isPlayingAudio) {
+        audioRef.current.pause();
+      } else {
+        audioRef.current.play();
+      }
+      setIsPlayingAudio(!isPlayingAudio);
+    }
+  };
+
   return (
     <div style={{ position: 'relative', minHeight: '100vh', width: '100vw', overflowX: 'hidden' }}>
 
@@ -154,7 +188,7 @@ export default function Home() {
         <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
           <ambientLight intensity={0.5} />
           <directionalLight position={[10, 10, 5]} intensity={1} />
-          <QuantumParticleField state={status} />
+          <QuantumParticleField state={isSimulating ? 'generating' : 'idle'} />
         </Canvas>
       </div>
 
@@ -168,7 +202,7 @@ export default function Home() {
             transition={{ duration: 0.6 }}
           >
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '12px', background: 'rgba(0, 229, 255, 0.1)', padding: '8px 16px', borderRadius: '24px', border: '1px solid rgba(0, 229, 255, 0.3)', marginBottom: '16px' }}>
-              <Terminal size={18} color="#00E5FF" />
+              <BrainCircuit size={18} color="#00E5FF" />
               <span style={{ color: '#00E5FF', fontWeight: 600, fontSize: '14px', letterSpacing: '1px' }}>AGENTIC CORE ONLINE</span>
             </div>
 
@@ -183,7 +217,7 @@ export default function Home() {
 
         {/* Resume Sessions Banner */}
         <AnimatePresence>
-          {sessions.length > 0 && status !== 'generating' && (
+          {sessions.length > 0 && !isSimulating && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -207,10 +241,11 @@ export default function Home() {
                   transition: 'all 0.2s ease',
                 }}
               >
-                <RotateCcw size={16} />
+                <Activity size={16} />
                 {sessions.length} interrupted session{sessions.length > 1 ? 's' : ''} — Click to resume
               </button>
 
+              {/* Session List Panel */}
               {/* Session List Panel */}
               <AnimatePresence>
                 {showSessionPanel && (
@@ -218,68 +253,61 @@ export default function Home() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
                     style={{ overflow: 'hidden' }}
                   >
-                    <div className="glass-panel" style={{ marginTop: '12px', padding: '16px', maxHeight: '300px', overflowY: 'auto' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{
+                      background: 'rgba(20, 24, 34, 0.95)',
+                      borderRadius: '16px',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      marginBottom: '24px',
+                      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+                    }}>
+                      <div style={{ padding: '16px 24px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                        <h3 style={{ margin: 0, color: '#fff', fontSize: '16px', fontWeight: 600 }}>Active Simulation Pipelines</h3>
+                      </div>
+                      <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '300px', overflowY: 'auto' }} className="custom-scrollbar">
                         {sessions.map((session) => (
-                          <div
+                          <div 
                             key={session.session_id}
                             style={{
-                              display: 'flex', alignItems: 'center', gap: '12px',
-                              padding: '12px 16px',
-                              background: 'rgba(255,255,255,0.03)',
-                              border: '1px solid rgba(255,255,255,0.08)',
-                              borderRadius: '8px',
-                              transition: 'border-color 0.2s',
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              background: 'rgba(0, 0, 0, 0.3)', padding: '12px 16px', borderRadius: '12px',
+                              border: '1px solid rgba(255, 255, 255, 0.05)', transition: 'all 0.2s',
+                              cursor: 'pointer'
                             }}
+                            onClick={() => startWorkflow(session.user_input, session.session_id)}
+                            onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'}
+                            onMouseOut={(e) => e.currentTarget.style.background = 'rgba(0, 0, 0, 0.3)'}
                           >
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: '13px', color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {session.user_input}
+                            <div style={{ flex: 1, overflow: 'hidden', marginRight: '16px' }}>
+                              <div style={{ color: '#fff', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '4px' }}>
+                                &quot;{session.user_input}&quot;
                               </div>
-                              <div style={{ display: 'flex', gap: '16px', marginTop: '6px', fontSize: '12px', color: '#8A8DAA' }}>
+                              <div style={{ display: 'flex', gap: '16px', color: 'rgba(255, 255, 255, 0.5)', fontSize: '12px' }}>
                                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  <Cpu size={12} />
+                                  <Terminal size={12} color={getStageColor(session.stage)} />
                                   {stageLabel(session.stage)}
                                 </span>
                                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  <Clock size={12} />
+                                  <Activity size={12} />
                                   {new Date(session.updated_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                 </span>
                               </div>
                             </div>
-
+                            
                             <button
-                              onClick={() => handleResume(session)}
-                              style={{
-                                padding: '8px 16px',
-                                background: 'rgba(0, 229, 255, 0.15)',
-                                border: '1px solid rgba(0, 229, 255, 0.4)',
-                                borderRadius: '6px',
-                                color: '#00E5FF',
-                                fontSize: '12px',
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                whiteSpace: 'nowrap',
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteSession(session.session_id);
                               }}
-                            >
-                              Resume
-                            </button>
-                            <button
-                              onClick={() => deleteSession(session.session_id)}
-                              title="Delete session"
                               style={{
-                                padding: '6px',
-                                background: 'transparent',
-                                border: '1px solid rgba(255,23,68,0.3)',
-                                borderRadius: '6px',
-                                color: '#FF1744',
-                                cursor: 'pointer',
+                                background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.3)', cursor: 'pointer',
+                                padding: '8px', borderRadius: '8px', transition: 'all 0.2s',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                               }}
                             >
-                              <X size={14} />
+                              <XCircle size={14} color="#FF1744" />
                             </button>
                           </div>
                         ))}
@@ -302,18 +330,176 @@ export default function Home() {
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
               >
-                <EventTimeline events={events} />
-                <div ref={eventsEndRef} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {events.map((event, i) => (
+                    <div key={i} style={{ 
+                      padding: '12px 16px', background: 'rgba(0,0,0,0.4)', borderRadius: '8px',
+                      borderLeft: `4px solid ${event.type === 'error' ? '#FF1744' : event.type === 'warning' ? '#FFD600' : '#00E5FF'}`,
+                      display: 'flex', flexDirection: 'column', gap: '6px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
+                          {event.type}
+                        </span>
+                        <span style={{ fontSize: '13px', color: '#00E5FF', fontWeight: 500, fontFamily: 'monospace' }}>
+                          {event.agent}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '14px', color: '#E2E8F0', lineHeight: '1.5', fontFamily: 'monospace' }}>
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{event.status}</ReactMarkdown>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={eventsEndRef} />
+                </div>
               </motion.div>
             )}
 
-            {finalData && (
+            {finalResult && !isSimulating && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5 }}
+                transition={{ delay: 0.2 }}
+                style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}
               >
-                <MissionReport data={finalData} />
+                {finalResult.nisq_warning && (
+                  <div style={{ padding: '16px', background: 'rgba(255, 23, 68, 0.1)', borderLeft: '4px solid #FF1744', borderRadius: '8px', display: 'flex', gap: '12px' }}>
+                    <Activity size={20} color="#FF1744" style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div>
+                      <h3 style={{ margin: '0 0 4px 0', color: '#FF1744', fontSize: '14px', fontWeight: 600 }}>Hardware Coherence Warning</h3>
+                      <p style={{ margin: 0, color: 'rgba(255,255,255,0.8)', fontSize: '13px', lineHeight: '1.5' }}>
+                        {finalResult.nisq_warning}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Story Context Panel */}
+                {finalResult.story_explanation && (
+                  <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                      <Lightbulb size={20} color="#FFD600" />
+                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Quantum Story Context</h2>
+                    </div>
+                    <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '14px', lineHeight: '1.6', maxHeight: '300px', overflowY: 'auto' }} className="custom-scrollbar">
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {finalResult.story_explanation}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+
+                {/* Multimedia Panel */}
+                <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                    <Play size={20} color="#00E5FF" />
+                    <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Multimedia Assets</h2>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+                    
+                    {/* Audio Player */}
+                    <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ fontSize: '12px', color: '#FFD600', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Narrative Audio</div>
+                      {finalResult.audio_narration ? (
+                        finalResult.audio_narration.includes(' ') || finalResult.audio_narration.length < 500 ? (
+                            <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic', maxHeight: '150px', overflowY: 'auto' }} className="custom-scrollbar">
+                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{finalResult.audio_narration}</ReactMarkdown>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                              <audio 
+                                ref={audioRef} 
+                                src={`data:audio/mp3;base64,${finalResult.audio_narration}`} 
+                                onEnded={() => setIsPlayingAudio(false)} 
+                                onPause={() => setIsPlayingAudio(false)}
+                                onPlay={() => setIsPlayingAudio(true)}
+                                style={{ display: 'none' }} 
+                              />
+                              <button 
+                                onClick={handleAudioPlayPause}
+                                style={{ 
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  padding: '16px', background: 'rgba(0, 229, 255, 0.1)', border: '1px solid rgba(0, 229, 255, 0.3)',
+                                  borderRadius: '50%', color: '#00E5FF', cursor: 'pointer', transition: 'all 0.2s'
+                                }}
+                              >
+                                {isPlayingAudio ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: '4px' }} />}
+                              </button>
+                              <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.8)', fontFamily: 'monospace' }}>
+                                {isPlayingAudio ? 'Playing Narrative...' : 'Play Scenario Narrative'}
+                              </div>
+                            </div>
+                          )
+                      ) : (
+                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No audio generated</div>
+                      )}
+                    </div>
+
+                    {/* Video Prompt */}
+                    <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ fontSize: '12px', color: '#D500F9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Veo Video Prompt</div>
+                      {finalResult.visuals?.video_prompt ? (
+                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic', borderLeft: '2px solid #D500F9', paddingLeft: '12px', maxHeight: '150px', overflowY: 'auto' }} className="custom-scrollbar">
+                          &quot;{finalResult.visuals.video_prompt}&quot;
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No prompt generated</div>
+                      )}
+                    </div>
+
+                  </div>
+                </div>
+
+                {/* Circuit Info (Code, Diagram, Explanation) */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
+                  
+                  {/* Circuit Visuals */}
+                  <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px' }}>
+                      <Terminal size={20} color="#00E5FF" />
+                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Architectural Circuit</h2>
+                    </div>
+                    
+                    <div style={{ flex: 1, minHeight: '400px', background: '#0d1117', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', position: 'relative', display: 'flex' }}>
+                       {finalResult.visuals?.circuit_diagram ? (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', overflow: 'auto' }}>
+                            <img 
+                              src={`data:image/png;base64,${finalResult.visuals.circuit_diagram}`} 
+                              alt="Generated Quantum Circuit Diagram" 
+                              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', background: 'white', borderRadius: '4px' }}
+                            />
+                          </div>
+                        ) : (finalResult.code ? (
+                          <pre style={{ padding: '16px', margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.9)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflow: 'auto', width: '100%' }}>
+                            {finalResult.code}
+                          </pre>
+                        ) : (
+                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '13px', fontFamily: 'monospace' }}>
+                            No circuit generated.
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* Math/Logic Explanation */}
+                  <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px' }}>
+                      <BrainCircuit size={20} color="#D500F9" />
+                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Algorithm Explanation</h2>
+                    </div>
+                    <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '14px', lineHeight: '1.6' }} className="markdown-body">
+                      {finalResult.explanation ? (
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {finalResult.explanation}
+                        </ReactMarkdown>
+                      ) : (
+                        <span style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.4)' }}>No explanation available.</span>
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
               </motion.div>
             )}
           </AnimatePresence>
@@ -335,19 +521,20 @@ export default function Home() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="E.g., I need to find the shortest path for an attacker scaling a 200 node network..."
-              disabled={status === 'generating'}
+              disabled={isSimulating}
             />
             <button
               type="submit"
               className="glass-button"
-              disabled={!prompt.trim() || status === 'generating'}
+              disabled={!prompt.trim() || isSimulating}
               style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
             >
-              {status === 'generating' ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
-              <span>{status === 'generating' ? 'ORCHESTRATING...' : 'EXECUTE'}</span>
+              {isSimulating ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
+              <span>{isSimulating ? 'ORCHESTRATING...' : 'EXECUTE'}</span>
             </button>
           </form>
         </motion.div>
+
 
       </main>
     </div>

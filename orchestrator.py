@@ -3,6 +3,8 @@ import time
 import os
 import subprocess
 import ast
+import base64
+from gtts import gTTS
 from dotenv import load_dotenv
 from typing import Dict, Any, List
 
@@ -239,7 +241,59 @@ class QuantumOrchestrator:
         time.sleep(5)
         visual_brief = self.media_producer.generate_visuals(mapping, validated_code.get('python_code', validated_code.get('code', '')))
 
-        await event_callback({"type": "success", "agent": "MediaProducer", "status": "Cinematic visual assets generated."})
+        await event_callback({"type": "success", "agent": "MediaProducer", "status": "Cinematic visual briefs generated."})
+
+        # --- STEP 6: ASSET GENERATION ---
+        await event_callback({"type": "progress", "agent": "Environment", "status": "Generating Circuit Diagram and Audio Narration..."})
+        
+        circuit_b64 = ""
+        audio_b64 = ""
+        # video_b64 = "" # Commented out Veo generation per user request
+        
+        try:
+            # Generate Audio
+            audio_script = visual_brief.get('audio_script', '')
+            if audio_script:
+                tts = gTTS(text=audio_script, lang='en')
+                tts.save("narration.mp3")
+                with open("narration.mp3", "rb") as f:
+                    audio_b64 = base64.b64encode(f.read()).decode('utf-8')
+                os.remove("narration.mp3")
+            
+            # Generate Circuit Diagram
+            python_code = validated_code.get('python_code', validated_code.get('code', ''))
+            with open("temp_circuit_draw.py", "w", encoding="utf-8") as f:
+                f.write(python_code)
+            
+            # Run the script to generate circuit.png
+            import sys
+            subprocess.run([sys.executable, "temp_circuit_draw.py"], capture_output=True, timeout=60)
+            
+            if os.path.exists("circuit.png"):
+                with open("circuit.png", "rb") as f:
+                    circuit_b64 = base64.b64encode(f.read()).decode('utf-8')
+                os.remove("circuit.png")
+            if os.path.exists("temp_circuit_draw.py"):
+                os.remove("temp_circuit_draw.py")
+                
+            # --- VEO VIDEO GENERATION (Commented as requested) ---
+            # if visual_brief.get('veo_video_prompt'):
+            #    from google import genai
+            #    from google.genai import types
+            #    client = genai.Client()
+            #    # Assuming veo-2.0-generate-001 endpoint allows txt2vid
+            #    video_response = client.models.generate_videos(
+            #        model='veo-2.0-generate-001',
+            #        prompt=visual_brief['veo_video_prompt'],
+            #        config=types.GenerateVideoConfig(aspect_ratio="16:9")
+            #    )
+            #    # Pseudo-code for retrieving bytes depending on the SDK implementation
+            #    video_b64 = base64.b64encode(video_response.generated_videos[0].video_bytes).decode('utf-8')
+
+            await event_callback({"type": "success", "agent": "Environment", "status": "Media assets successfully compiled."})
+        except Exception as e:
+            await event_callback({"type": "warning", "agent": "Environment", "status": f"Asset generation had issues: {str(e)}"})
+
 
         # FINAL OUTPUT ASSEMBLY
         final_package = {
@@ -247,13 +301,15 @@ class QuantumOrchestrator:
                 "algorithm": mapping.get('identified_algorithm', mapping.get('algorithm', 'Unknown')),
                 "qubits": mapping.get('qubit_requirement_estimate', mapping.get('qubits', 0))
             },
+            "story_explanation": mapping.get('story_explanation', ''),
             "code": validated_code.get('python_code', validated_code.get('code', '')),
             "explanation": validated_code.get('explanation', ''),
             "visuals": {
                 "video_prompt": visual_brief.get('veo_video_prompt', visual_brief.get('video_prompt', '')),
-                "image_prompt": visual_brief.get('imagen_graphic_prompt', visual_brief.get('image_prompt', ''))
+                "circuit_diagram": circuit_b64,
+                # "video_base64": video_b64
             },
-            "audio_narration": visual_brief.get('audio_script', ''),
+            "audio_narration": audio_b64,
             "nisq_warning": nisq_warning
         }
 
