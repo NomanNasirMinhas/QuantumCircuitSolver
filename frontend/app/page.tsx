@@ -335,6 +335,7 @@ export default function Home() {
                       position: { x: 50 + (i % 2) * 150, y: 50 + i * 120 },
                       targetPosition: Position.Top,
                       sourcePosition: Position.Bottom,
+                      draggable: true,
                       style: {
                         background: 'rgba(0,0,0,0.8)',
                         color: '#fff',
@@ -365,6 +366,8 @@ export default function Home() {
                       };
                     }).filter(Boolean) as Edge[]}
                     fitView
+                    nodesDraggable={true}
+                    panOnDrag={true}
                   >
                     <Background color="#fff" gap={16} size={1} />
                     <Controls />
@@ -373,7 +376,7 @@ export default function Home() {
               </motion.div>
             )}
 
-            {finalResult && !isSimulating && (
+            {finalResult && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -475,27 +478,35 @@ export default function Home() {
                   <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px' }}>
                       <Terminal size={20} color="#00E5FF" />
-                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Architectural Circuit</h2>
+                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Architectural Circuit & Code</h2>
                     </div>
-                    
-                    <div style={{ flex: 1, minHeight: '400px', background: '#0d1117', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', position: 'relative', display: 'flex' }}>
-                       {finalResult.qiskit_circuit_diagram ? (
-                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', overflow: 'auto' }}>
-                            <img 
-                              src={`data:image/png;base64,${finalResult.qiskit_circuit_diagram}`} 
-                              alt="Generated Quantum Circuit Diagram" 
-                              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', background: 'white', borderRadius: '4px' }}
-                            />
-                          </div>
-                        ) : (finalResult.complete_code ? (
-                          <pre style={{ padding: '16px', margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.9)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflow: 'auto', width: '100%' }}>
-                            {finalResult.complete_code}
-                          </pre>
-                        ) : (
-                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '13px', fontFamily: 'monospace' }}>
-                            No circuit generated.
-                          </div>
-                        ))}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {/* Code Block */}
+                      {finalResult.complete_code && (
+                        <div style={{ flex: 1, minHeight: '200px', background: '#0d1117', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', position: 'relative', display: 'flex' }}>
+                            <pre style={{ padding: '16px', margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.9)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflow: 'auto', width: '100%' }}>
+                              {finalResult.complete_code}
+                            </pre>
+                        </div>
+                      )}
+
+                      {/* Circuit Diagram */}
+                      <div style={{ flex: 1, minHeight: '400px', background: '#0d1117', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', position: 'relative', display: 'flex' }}>
+                         {finalResult.qiskit_circuit_diagram ? (
+                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', overflow: 'auto' }}>
+                              <img 
+                                src={`data:image/png;base64,${finalResult.qiskit_circuit_diagram}`} 
+                                alt="Generated Quantum Circuit Diagram" 
+                                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', background: 'white', borderRadius: '4px' }}
+                              />
+                            </div>
+                          ) : (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '13px', fontFamily: 'monospace' }}>
+                              No circuit diagram generated.
+                            </div>
+                          )}
+                      </div>
                     </div>
 
                     {/* Result Diagram */}

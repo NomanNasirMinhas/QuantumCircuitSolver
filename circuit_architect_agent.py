@@ -11,7 +11,7 @@ Generate self-contained Python scripts that build, transpile, and simulate quant
 
 1. Code Generation Standards
 - Environment: Assume qiskit and qiskit-aer are pre-installed.
-- Modern Syntax: Use qiskit.primitives (Sampler/Estimator) for execution. Do not use deprecated execute() or Aer.get_backend() without transpilation.
+- Modern Syntax: You MUST output a dictionary of measurement counts at the very end using Python's `print()`. The easiest way to get this without dealing with Qiskit 1.X `SamplerV2` `DataBin` access issues is to use `from qiskit_aer import AerSimulator; simulator = AerSimulator(); result = simulator.run(qc).result(); counts = result.get_counts(); print(counts)`. Do not use primitive Samplers if you cannot correctly access their DataBin.
 - Optimization: Always include a transpile() step with optimization_level=3.
 - State Management: Ensure every circuit includes a measurement step or statevector capture for visualization.
 
