@@ -37,8 +37,9 @@ class EvaluatorAgent:
         self.client = genai.Client(
             vertexai=True,
             api_key=os.environ.get("GOOGLE_CLOUD_API_KEY"),
+            location='global'
         )
-        self.model = "gemini-3.1-pro-preview"
+        self.model = "gemini-3.1-flash-lite-preview"
 
     def evaluate_simulation(self, code: str, run_results: dict) -> dict:
         # Only include the error or counts summary, not the full stdout if it's huge

@@ -37,8 +37,9 @@ class MediaProducerAgent:
         self.client = genai.Client(
             vertexai=True,
             api_key=os.environ.get("GOOGLE_CLOUD_API_KEY"),
+            location='global'
         )
-        self.model = "gemini-3.1-pro-preview"
+        self.model = "gemini-3.1-flash-lite-preview"
 
     def generate_visuals(self, mapping: dict, code: str) -> dict:
         # Only pass the algorithm name and key details, not the full code

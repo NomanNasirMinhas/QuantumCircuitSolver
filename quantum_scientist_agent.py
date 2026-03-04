@@ -62,8 +62,9 @@ class ScientistAgent:
         self.client = genai.Client(
             vertexai=True,
             api_key=os.environ.get("GOOGLE_CLOUD_API_KEY"),
+            location='global'
         )
-        self.model = "gemini-3.1-pro-preview"
+        self.model = "gemini-3.1-flash-lite-preview"
 
     def validate_proposal(self, mapping: dict, code: str) -> dict:
         # Slim the mapping to only what the Scientist needs for audit
