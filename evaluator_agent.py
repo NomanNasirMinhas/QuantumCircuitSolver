@@ -36,8 +36,7 @@ class EvaluatorAgent:
     def __init__(self):
         self.client = genai.Client(
             vertexai=True,
-            api_key=os.environ.get("GOOGLE_CLOUD_API_KEY"),
-            location='global'
+            api_key=os.environ.get("GOOGLE_CLOUD_API_KEY")
         )
         self.model = "gemini-3.1-flash-lite-preview"
 
