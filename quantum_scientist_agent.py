@@ -93,10 +93,10 @@ Use Google Search to verify algorithm requirements. Ensure compliance with physi
           system_instruction=SYSTEM_INSTRUCTION,
           temperature=0.1,
           top_p=0.95,
-          max_output_tokens=4096,
+          max_output_tokens=8192,
           response_mime_type="application/json",
           tools=tools,
-          thinking_config=types.ThinkingConfig(thinking_budget=16000),  # HIGH - accuracy is critical here
+          thinking_config=types.ThinkingConfig(thinking_budget=4096),
         )
 
         response = self.client.models.generate_content(

@@ -62,9 +62,9 @@ class EvaluatorAgent:
           system_instruction=SYSTEM_INSTRUCTION,
           temperature=0.1,
           top_p=0.95,
-          max_output_tokens=2048,
+          max_output_tokens=8192,
           response_mime_type="application/json",
-          thinking_config=types.ThinkingConfig(thinking_budget=8000),  # LOW-MEDIUM: checking results, not proving math
+          thinking_config=types.ThinkingConfig(thinking_budget=2048),
         )
 
         response = self.client.models.generate_content(

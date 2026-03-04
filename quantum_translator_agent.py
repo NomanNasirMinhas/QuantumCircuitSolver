@@ -59,10 +59,9 @@ class TranslatorAgent:
           system_instruction=SYSTEM_INSTRUCTION,
           temperature=0.5,
           top_p=0.95,
-          max_output_tokens=2048,  # Translator output is small JSON, cap tokens
+          max_output_tokens=8192,
           response_mime_type="application/json",
           tools=tools,
-          thinking_config=types.ThinkingConfig(thinking_budget=0),  # No thinking needed
         )
 
         response = self.client.models.generate_content(

@@ -30,7 +30,7 @@ If the requested circuit exceeds 50 qubits, automatically suggest a scaled-down 
 - ALWAYS specify target and control qubits explicitly. NEVER hallucinate missing arguments or empty lists.
 - For multiple targets, provide a list: `qc.x([0, 2])` or `qc.h(range(3))`. NEVER use `qc.x()`.
 - For multi-controlled gates, provide a list for controls: `qc.mcx([0, 1, 2], 3)`. NEVER use `qc.mcx(, 3)`.
-- NISQ feasibility: target circuit depth < 100 for NISQ, or propose QEC. Reduce N for a proof-of-concept if N > 50 qubits.
+- NISQ feasibility limits: target circuit depth < 100 for NISQ. MUST reduce N to a small number (e.g. 2-5 qubits) for a proof-of-concept to comply with NISQ hardware limits without crashing. ALWAYS add an inline code comment indicating what the theoretical actual qubit count should be for a full-scale algorithm.
 """
 
 class ArchitectAgent:
@@ -74,7 +74,7 @@ class ArchitectAgent:
           max_output_tokens=8192,
           response_mime_type="application/json",
           tools=tools,
-          thinking_config=types.ThinkingConfig(thinking_budget=8000),  # LOW budget - enough for code logic, not exhaustive
+          thinking_config=types.ThinkingConfig(thinking_budget=2048),
         )
 
         response = self.client.models.generate_content(

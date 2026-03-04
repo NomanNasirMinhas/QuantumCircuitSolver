@@ -8,8 +8,10 @@ import 'katex/dist/katex.min.css';
 import { Canvas } from '@react-three/fiber';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Activity, BrainCircuit, Play, Terminal, XCircle, Lightbulb, Pause, Loader2, Send } from 'lucide-react';
+import { ReactFlow, Background, Controls, Edge, Position, MarkerType } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 import QuantumParticleField from './components/QuantumSphere';
-import EventTimeline, { QuantumEvent } from './components/EventTimeline';
+import { QuantumEvent } from './components/EventTimeline';
 
 type SessionSummary = {
   session_id: string;
@@ -22,14 +24,13 @@ type SessionSummary = {
 
 type FinalResultData = {
   metadata?: { algorithm: string; qubits: number };
-  story_explanation?: string;
-  code?: string;
-  explanation?: string;
-  visuals?: {
-    video_prompt?: string;
-    circuit_diagram?: string; // base64 encoded image
-  };
-  audio_narration?: string; // base64 encoded audio
+  quantum_story_context?: string;
+  complete_code?: string;
+  algorithm_explanation?: string;
+  video_prompt?: string;
+  qiskit_circuit_diagram?: string;
+  result_diagram?: string;
+  narrative_audio?: string;
   nisq_warning?: string;
 };
 
@@ -42,7 +43,6 @@ export default function Home() {
   const [showSessionPanel, setShowSessionPanel] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const eventsEndRef = useRef<HTMLDivElement>(null);
 
   // Audio Player State
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -64,10 +64,7 @@ export default function Home() {
     fetchSessions(); 
   }, []);
 
-  // Auto-scroll timeline
-  useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [events]);
+
 
   const deleteSession = async (sessionId: string) => {
     try {
@@ -327,30 +324,51 @@ export default function Home() {
             {events.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
+                animate={{ opacity: 1, height: '400px' }}
                 exit={{ opacity: 0, height: 0 }}
+                style={{ background: 'rgba(20, 24, 34, 0.8)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden' }}
               >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {events.map((event, i) => (
-                    <div key={i} style={{ 
-                      padding: '12px 16px', background: 'rgba(0,0,0,0.4)', borderRadius: '8px',
-                      borderLeft: `4px solid ${event.type === 'error' ? '#FF1744' : event.type === 'warning' ? '#FFD600' : '#00E5FF'}`,
-                      display: 'flex', flexDirection: 'column', gap: '6px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
-                          {event.type}
-                        </span>
-                        <span style={{ fontSize: '13px', color: '#00E5FF', fontWeight: 500, fontFamily: 'monospace' }}>
-                          {event.agent}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '14px', color: '#E2E8F0', lineHeight: '1.5', fontFamily: 'monospace' }}>
-                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{event.status}</ReactMarkdown>
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={eventsEndRef} />
+                <div style={{ width: '100%', height: '400px' }}>
+                  <ReactFlow
+                    nodes={events.map((event, i) => ({
+                      id: `node-${i}`,
+                      position: { x: 50 + (i % 2) * 150, y: 50 + i * 120 },
+                      targetPosition: Position.Top,
+                      sourcePosition: Position.Bottom,
+                      style: {
+                        background: 'rgba(0,0,0,0.8)',
+                        color: '#fff',
+                        border: `2px solid ${event.type === 'error' ? '#FF1744' : event.type === 'warning' ? '#FFD600' : '#00E5FF'}`,
+                        borderRadius: '8px',
+                        padding: '12px',
+                        width: '280px',
+                        fontSize: '12px'
+                      },
+                      data: {
+                        label: (
+                          <div style={{ textAlign: 'left' }}>
+                            <div style={{ fontSize: '10px', color: '#00E5FF', marginBottom: '4px', textTransform: 'uppercase' }}>{event.agent} | {event.type}</div>
+                            <div style={{ fontFamily: 'monospace', opacity: 0.9 }}>{event.status}</div>
+                          </div>
+                        )
+                      }
+                    }))}
+                    edges={events.map((event, i) => {
+                      if (i === 0) return null;
+                      return {
+                        id: `edge-${i-1}-${i}`,
+                        source: `node-${i-1}`,
+                        target: `node-${i}`,
+                        animated: true,
+                        style: { stroke: '#00E5FF', strokeWidth: 2 },
+                        markerEnd: { type: MarkerType.ArrowClosed, color: '#00E5FF' }
+                      };
+                    }).filter(Boolean) as Edge[]}
+                    fitView
+                  >
+                    <Background color="#fff" gap={16} size={1} />
+                    <Controls />
+                  </ReactFlow>
                 </div>
               </motion.div>
             )}
@@ -375,7 +393,7 @@ export default function Home() {
                 )}
 
                 {/* Story Context Panel */}
-                {finalResult.story_explanation && (
+                {finalResult.quantum_story_context && (
                   <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                       <Lightbulb size={20} color="#FFD600" />
@@ -383,7 +401,7 @@ export default function Home() {
                     </div>
                     <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '14px', lineHeight: '1.6', maxHeight: '300px', overflowY: 'auto' }} className="custom-scrollbar">
                       <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                        {finalResult.story_explanation}
+                        {finalResult.quantum_story_context}
                       </ReactMarkdown>
                     </div>
                   </div>
@@ -400,16 +418,16 @@ export default function Home() {
                     {/* Audio Player */}
                     <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ fontSize: '12px', color: '#FFD600', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Narrative Audio</div>
-                      {finalResult.audio_narration ? (
-                        finalResult.audio_narration.includes(' ') || finalResult.audio_narration.length < 500 ? (
+                      {finalResult.narrative_audio ? (
+                        finalResult.narrative_audio.includes(' ') || finalResult.narrative_audio.length < 500 ? (
                             <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic', maxHeight: '150px', overflowY: 'auto' }} className="custom-scrollbar">
-                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{finalResult.audio_narration}</ReactMarkdown>
+                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{finalResult.narrative_audio}</ReactMarkdown>
                             </div>
                           ) : (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                               <audio 
                                 ref={audioRef} 
-                                src={`data:audio/mp3;base64,${finalResult.audio_narration}`} 
+                                src={`data:audio/mp3;base64,${finalResult.narrative_audio}`} 
                                 onEnded={() => setIsPlayingAudio(false)} 
                                 onPause={() => setIsPlayingAudio(false)}
                                 onPlay={() => setIsPlayingAudio(true)}
@@ -438,9 +456,9 @@ export default function Home() {
                     {/* Video Prompt */}
                     <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ fontSize: '12px', color: '#D500F9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Veo Video Prompt</div>
-                      {finalResult.visuals?.video_prompt ? (
+                      {finalResult.video_prompt ? (
                         <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic', borderLeft: '2px solid #D500F9', paddingLeft: '12px', maxHeight: '150px', overflowY: 'auto' }} className="custom-scrollbar">
-                          &quot;{finalResult.visuals.video_prompt}&quot;
+                          &quot;{finalResult.video_prompt}&quot;
                         </div>
                       ) : (
                         <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No prompt generated</div>
@@ -461,17 +479,17 @@ export default function Home() {
                     </div>
                     
                     <div style={{ flex: 1, minHeight: '400px', background: '#0d1117', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', position: 'relative', display: 'flex' }}>
-                       {finalResult.visuals?.circuit_diagram ? (
+                       {finalResult.qiskit_circuit_diagram ? (
                           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', overflow: 'auto' }}>
                             <img 
-                              src={`data:image/png;base64,${finalResult.visuals.circuit_diagram}`} 
+                              src={`data:image/png;base64,${finalResult.qiskit_circuit_diagram}`} 
                               alt="Generated Quantum Circuit Diagram" 
                               style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', background: 'white', borderRadius: '4px' }}
                             />
                           </div>
-                        ) : (finalResult.code ? (
+                        ) : (finalResult.complete_code ? (
                           <pre style={{ padding: '16px', margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.9)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflow: 'auto', width: '100%' }}>
-                            {finalResult.code}
+                            {finalResult.complete_code}
                           </pre>
                         ) : (
                           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '13px', fontFamily: 'monospace' }}>
@@ -479,6 +497,22 @@ export default function Home() {
                           </div>
                         ))}
                     </div>
+
+                    {/* Result Diagram */}
+                    {finalResult.result_diagram && (
+                      <div style={{ flex: 1, marginTop: '24px', minHeight: '400px', background: '#0d1117', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', position: 'relative', display: 'flex' }}>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'absolute', top: '16px', left: '16px' }}>
+                          <h3 style={{ margin: 0, color: '#fff', fontSize: '16px', fontWeight: 600, fontFamily: 'monospace' }}>Result Diagram (Simulation Histogram)</h3>
+                        </div>
+                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', overflow: 'auto', marginTop: '40px' }}>
+                          <img 
+                            src={`data:image/png;base64,${finalResult.result_diagram}`} 
+                            alt="Result Histogram Diagram" 
+                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', background: 'white', borderRadius: '4px' }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Math/Logic Explanation */}
@@ -488,9 +522,9 @@ export default function Home() {
                       <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Algorithm Explanation</h2>
                     </div>
                     <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '14px', lineHeight: '1.6' }} className="markdown-body">
-                      {finalResult.explanation ? (
+                      {finalResult.algorithm_explanation ? (
                         <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                          {finalResult.explanation}
+                          {finalResult.algorithm_explanation}
                         </ReactMarkdown>
                       ) : (
                         <span style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.4)' }}>No explanation available.</span>
