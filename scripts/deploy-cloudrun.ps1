@@ -5,7 +5,10 @@ param(
   [string]$BackendService = $(if ($env:BACKEND_SERVICE) { $env:BACKEND_SERVICE } else { "quantum-circuit-orchestrator" }),
   [string]$FrontendService = $(if ($env:FRONTEND_SERVICE) { $env:FRONTEND_SERVICE } else { "quantum-circuit-frontend" }),
   [string]$CorsAllowOrigins = $(if ($env:CORS_ALLOW_ORIGINS) { $env:CORS_ALLOW_ORIGINS } else { "https://your-frontend-domain.example" }),
-  [string]$GcpLocation = $(if ($env:GCP_LOCATION) { $env:GCP_LOCATION } else { "global" })
+  [string]$GcpLocation = $(if ($env:GCP_LOCATION) { $env:GCP_LOCATION } else { "global" }),
+  [string]$AccessCodeMasterPassword = $(if ($env:ACCESS_CODE_MASTER_PASSWORD) { $env:ACCESS_CODE_MASTER_PASSWORD } else { "change-this-master-password" }),
+  [string]$AccessCodeResetEndpoint = $(if ($env:ACCESS_CODE_RESET_ENDPOINT) { $env:ACCESS_CODE_RESET_ENDPOINT } else { "/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset" }),
+  [string]$AccessCodeStateFile = $(if ($env:ACCESS_CODE_STATE_FILE) { $env:ACCESS_CODE_STATE_FILE } else { "/tmp/access_codes_state.json" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,7 +51,7 @@ if (-not $repoExists) {
 }
 
 Write-Host "==> Deploying backend service: $BackendService"
-$backendSubs = "_REGION=$Region,_SERVICE_NAME=$BackendService,_IMAGE=$backendImage,_CORS_ORIGINS=$CorsAllowOrigins,_GCP_LOCATION=$GcpLocation"
+$backendSubs = "_REGION=$Region,_SERVICE_NAME=$BackendService,_IMAGE=$backendImage,_CORS_ORIGINS=$CorsAllowOrigins,_GCP_LOCATION=$GcpLocation,_ACCESS_CODE_MASTER_PASSWORD=$AccessCodeMasterPassword,_ACCESS_CODE_RESET_ENDPOINT=$AccessCodeResetEndpoint,_ACCESS_CODE_STATE_FILE=$AccessCodeStateFile"
 gcloud builds submit `
   --config cloudbuild.yaml `
   --substitutions $backendSubs `

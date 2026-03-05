@@ -3,3 +3,4 @@ __pycache__
 .env
 sessions/
 debug_runs/
+access_codes_state.json

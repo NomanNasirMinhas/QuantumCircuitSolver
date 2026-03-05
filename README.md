@@ -58,6 +58,7 @@ This deploys your current `orchestrator.py` + custom agents backend and the Next
 export PROJECT_ID="your-gcp-project-id"
 export REGION="us-central1"
 export CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
+export ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
 bash scripts/deploy-cloudrun.sh
 ```
 
@@ -66,8 +67,33 @@ bash scripts/deploy-cloudrun.sh
 $env:PROJECT_ID="your-gcp-project-id"
 $env:REGION="us-central1"
 $env:CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
+$env:ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
 .\scripts\deploy-cloudrun.ps1
 ```
+
+### Access code gate behavior
+- Backend starts with 5 hardcoded one-time access codes.
+- Frontend requires a valid code before showing the main prompt/agent screen.
+- On successful validation, code is consumed and cannot be reused.
+- When all codes are used, frontend shows "all codes exhausted, ask admin to reset."
+
+Default initial codes:
+- `QCS-ALPHA-7K2M`
+- `QCS-BETA-9P4R`
+- `QCS-GAMMA-3T8X`
+- `QCS-DELTA-6N5V`
+- `QCS-OMEGA-1H9Q`
+
+### Admin reset route
+The backend exposes a long random reset endpoint:
+- Default: `/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset`
+
+Call it with master password query param:
+```bash
+curl "https://YOUR_BACKEND_URL/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset?master_password=YOUR_MASTER_PASSWORD"
+```
+
+This returns a freshly generated set of 5 new access codes.
 
 ### What the script does
 1. Enables required APIs (`run`, `cloudbuild`, `artifactregistry`, `aiplatform`).

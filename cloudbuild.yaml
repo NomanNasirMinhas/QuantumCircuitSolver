@@ -46,6 +46,12 @@ steps:
       - MAX_ACTIVE_WORKFLOWS_PER_IP=${_MAX_ACTIVE_WORKFLOWS_PER_IP}
       - --set-env-vars
       - DEBUG_RUNS_DIR=${_DEBUG_RUNS_DIR}
+      - --set-env-vars
+      - ACCESS_CODE_MASTER_PASSWORD=${_ACCESS_CODE_MASTER_PASSWORD}
+      - --set-env-vars
+      - ACCESS_CODE_RESET_ENDPOINT=${_ACCESS_CODE_RESET_ENDPOINT}
+      - --set-env-vars
+      - ACCESS_CODE_STATE_FILE=${_ACCESS_CODE_STATE_FILE}
 
 substitutions:
   _REGION: us-central1
@@ -56,6 +62,9 @@ substitutions:
   _MAX_PROMPT_LENGTH: "2000"
   _MAX_ACTIVE_WORKFLOWS_PER_IP: "1"
   _DEBUG_RUNS_DIR: /tmp/debug_runs
+  _ACCESS_CODE_MASTER_PASSWORD: change-this-master-password
+  _ACCESS_CODE_RESET_ENDPOINT: /admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset
+  _ACCESS_CODE_STATE_FILE: /tmp/access_codes_state.json
   _TIMEOUT: "3600"
   _MAX_INSTANCES: "1"
   _MEMORY: 4Gi

@@ -5,10 +5,15 @@ import ast
 import base64
 import asyncio
 import tempfile
+import secrets
+import string
+import threading
+from datetime import datetime, timezone
 from typing import Dict, Any, List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -29,6 +34,22 @@ DEBUG_RUNS_DIR = os.getenv(
     "DEBUG_RUNS_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_runs"),
 )
+ACCESS_CODES_STATE_FILE = os.getenv(
+    "ACCESS_CODE_STATE_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "access_codes_state.json"),
+)
+ACCESS_CODE_MASTER_PASSWORD = os.getenv("ACCESS_CODE_MASTER_PASSWORD", "").strip()
+ACCESS_CODE_RESET_ENDPOINT = os.getenv(
+    "ACCESS_CODE_RESET_ENDPOINT",
+    "/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset",
+)
+INITIAL_ACCESS_CODES = [
+    "QCS-ALPHA-7K2M",
+    "QCS-BETA-9P4R",
+    "QCS-GAMMA-3T8X",
+    "QCS-DELTA-6N5V",
+    "QCS-OMEGA-1H9Q",
+]
 
 
 def _parse_allowed_origins() -> List[str]:
@@ -36,6 +57,112 @@ def _parse_allowed_origins() -> List[str]:
     if not raw:
         return ["*"]
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+class AccessCodeConsumeRequest(BaseModel):
+    code: str
+
+
+class AccessCodeManager:
+    def __init__(self, state_file: str, initial_codes: List[str]):
+        self.state_file = state_file
+        self.initial_codes = [code.strip().upper() for code in initial_codes if code.strip()]
+        self._lock = threading.Lock()
+        self._ensure_initialized()
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _build_state(self, codes: List[str]) -> Dict[str, Any]:
+        now = self._utc_now()
+        return {
+            "created_at": now,
+            "updated_at": now,
+            "codes": [{"code": code, "used": False, "used_at": None} for code in codes],
+        }
+
+    def _ensure_initialized(self) -> None:
+        if os.path.exists(self.state_file):
+            return
+        directory = os.path.dirname(self.state_file)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        self._write_state(self._build_state(self.initial_codes))
+
+    def _read_state(self) -> Dict[str, Any]:
+        try:
+            with open(self.state_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            state = self._build_state(self.initial_codes)
+            self._write_state(state)
+        if "codes" not in state or not isinstance(state["codes"], list):
+            state = self._build_state(self.initial_codes)
+            self._write_state(state)
+        return state
+
+    def _write_state(self, state: Dict[str, Any]) -> None:
+        state["updated_at"] = self._utc_now()
+        with open(self.state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+
+    @staticmethod
+    def _status_from_state(state: Dict[str, Any]) -> Dict[str, Any]:
+        codes = state.get("codes", [])
+        total = len(codes)
+        used = sum(1 for item in codes if item.get("used"))
+        remaining = total - used
+        return {"total": total, "used": used, "remaining": remaining, "exhausted": remaining <= 0}
+
+    @staticmethod
+    def _generate_codes(count: int = 5) -> List[str]:
+        alphabet = string.ascii_uppercase + string.digits
+        generated: List[str] = []
+        while len(generated) < count:
+            suffix = "".join(secrets.choice(alphabet) for _ in range(8))
+            code = f"QCS-{suffix[:4]}-{suffix[4:]}"
+            if code not in generated:
+                generated.append(code)
+        return generated
+
+    def get_status(self) -> Dict[str, Any]:
+        with self._lock:
+            state = self._read_state()
+            return self._status_from_state(state)
+
+    def consume_code(self, raw_code: str) -> Dict[str, Any]:
+        normalized_code = (raw_code or "").strip().upper()
+        with self._lock:
+            state = self._read_state()
+            status = self._status_from_state(state)
+            if status["exhausted"]:
+                return {"ok": False, "reason": "exhausted", "message": "All access codes are exhausted.", **status}
+
+            match = None
+            for item in state["codes"]:
+                if item.get("code", "").upper() == normalized_code:
+                    match = item
+                    break
+
+            if not match:
+                return {"ok": False, "reason": "invalid_code", "message": "Invalid access code.", **status}
+            if match.get("used"):
+                return {"ok": False, "reason": "already_used", "message": "This access code has already been used.", **status}
+
+            match["used"] = True
+            match["used_at"] = self._utc_now()
+            self._write_state(state)
+            next_status = self._status_from_state(state)
+            return {"ok": True, "reason": "consumed", "message": "Access granted.", **next_status}
+
+    def reset_codes(self, count: int = 5) -> Dict[str, Any]:
+        new_codes = self._generate_codes(count)
+        with self._lock:
+            state = self._build_state(new_codes)
+            self._write_state(state)
+            status = self._status_from_state(state)
+        return {"generated_codes": new_codes, **status}
 
 
 def _ensure_run_dir(session_id: str) -> str:
@@ -637,6 +764,7 @@ app.add_middleware(
 
 session_manager = SessionManager()
 orchestrator = QuantumOrchestrator()
+access_code_manager = AccessCodeManager(ACCESS_CODES_STATE_FILE, INITIAL_ACCESS_CODES)
 active_workflows_by_ip: Dict[str, int] = {}
 active_workflows_lock = asyncio.Lock()
 
@@ -677,6 +805,31 @@ def delete_session(session_id: str):
     if deleted:
         return {"status": "deleted"}
     return {"status": "not_found"}
+
+
+@app.get("/access/status")
+def access_status():
+    return access_code_manager.get_status()
+
+
+@app.post("/access/consume")
+def consume_access_code(payload: AccessCodeConsumeRequest):
+    return access_code_manager.consume_code(payload.code)
+
+
+@app.get(ACCESS_CODE_RESET_ENDPOINT)
+def reset_access_codes(master_password: str):
+    if not ACCESS_CODE_MASTER_PASSWORD:
+        raise HTTPException(status_code=503, detail="Master password is not configured on the server.")
+    if master_password != ACCESS_CODE_MASTER_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+    reset_result = access_code_manager.reset_codes(count=5)
+    return {
+        "status": "reset",
+        "message": "New access codes generated.",
+        **reset_result,
+        "reset_endpoint": ACCESS_CODE_RESET_ENDPOINT,
+    }
 
 
 @app.websocket("/ws/simulate")

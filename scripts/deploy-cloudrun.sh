@@ -11,6 +11,9 @@ BACKEND_SERVICE="${BACKEND_SERVICE:-quantum-circuit-orchestrator}"
 FRONTEND_SERVICE="${FRONTEND_SERVICE:-quantum-circuit-frontend}"
 CORS_ALLOW_ORIGINS="${CORS_ALLOW_ORIGINS:-https://your-frontend-domain.example}"
 GCP_LOCATION="${GCP_LOCATION:-global}"
+ACCESS_CODE_MASTER_PASSWORD="${ACCESS_CODE_MASTER_PASSWORD:-change-this-master-password}"
+ACCESS_CODE_RESET_ENDPOINT="${ACCESS_CODE_RESET_ENDPOINT:-/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset}"
+ACCESS_CODE_STATE_FILE="${ACCESS_CODE_STATE_FILE:-/tmp/access_codes_state.json}"
 
 if [[ -z "${PROJECT_ID}" ]]; then
   echo "PROJECT_ID is empty. Set PROJECT_ID or run: gcloud config set project <PROJECT_ID>"
@@ -43,7 +46,7 @@ fi
 echo "==> Deploying backend service: ${BACKEND_SERVICE}"
 gcloud builds submit \
   --config cloudbuild.yaml \
-  --substitutions="_REGION=${REGION},_SERVICE_NAME=${BACKEND_SERVICE},_IMAGE=${BACKEND_IMAGE},_CORS_ORIGINS=${CORS_ALLOW_ORIGINS},_GCP_LOCATION=${GCP_LOCATION}" \
+  --substitutions="_REGION=${REGION},_SERVICE_NAME=${BACKEND_SERVICE},_IMAGE=${BACKEND_IMAGE},_CORS_ORIGINS=${CORS_ALLOW_ORIGINS},_GCP_LOCATION=${GCP_LOCATION},_ACCESS_CODE_MASTER_PASSWORD=${ACCESS_CODE_MASTER_PASSWORD},_ACCESS_CODE_RESET_ENDPOINT=${ACCESS_CODE_RESET_ENDPOINT},_ACCESS_CODE_STATE_FILE=${ACCESS_CODE_STATE_FILE}" \
   --project "${PROJECT_ID}" \
   .
 

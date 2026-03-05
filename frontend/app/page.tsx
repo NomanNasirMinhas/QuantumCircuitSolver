@@ -53,9 +53,20 @@ type FinalResultData = {
   nisq_warning?: string;
 };
 
+type AccessCodeResponse = {
+  ok?: boolean;
+  reason?: string;
+  message?: string;
+  total?: number;
+  used?: number;
+  remaining?: number;
+  exhausted?: boolean;
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/simulate';
 const MAX_WS_RECONNECT_ATTEMPTS = 3;
+const ACCESS_GRANTED_STORAGE_KEY = 'qcs_access_granted_v1';
 
 const PRESET_PROMPTS = [
   'Find the shortest path in a 10-node network using a Grover-style search strategy.',
@@ -65,6 +76,13 @@ const PRESET_PROMPTS = [
 ];
 
 export default function Home() {
+  const [accessCode, setAccessCode] = useState('');
+  const [isAccessGranted, setIsAccessGranted] = useState(false);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+  const [isSubmittingAccessCode, setIsSubmittingAccessCode] = useState(false);
+  const [accessError, setAccessError] = useState('');
+  const [accessInfo, setAccessInfo] = useState<AccessCodeResponse | null>(null);
+
   const [prompt, setPrompt] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
   const [events, setEvents] = useState<QuantumEvent[]>([]);
@@ -79,6 +97,61 @@ export default function Home() {
   const currentPromptRef = useRef('');
   const currentSessionIdRef = useRef<string | null>(null);
 
+  const fetchAccessStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/access/status`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data: AccessCodeResponse = await res.json();
+      setAccessInfo(data);
+      return data;
+    } catch (err) {
+      console.error('Failed to fetch access status:', err);
+      return null;
+    }
+  };
+
+  const submitAccessCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accessCode.trim() || isSubmittingAccessCode) return;
+
+    setIsSubmittingAccessCode(true);
+    setAccessError('');
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/access/consume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: accessCode.trim() }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data: AccessCodeResponse = await res.json();
+      setAccessInfo(data);
+
+      if (data.ok) {
+        setIsAccessGranted(true);
+        sessionStorage.setItem(ACCESS_GRANTED_STORAGE_KEY, 'granted');
+        setAccessCode('');
+        setAccessError('');
+      } else if (data.reason === 'exhausted') {
+        setAccessError('All access codes are exhausted. Ask admin to reset codes.');
+      } else if (data.reason === 'already_used') {
+        setAccessError('This code was already used. Please enter a fresh code.');
+      } else {
+        setAccessError(data.message || 'Invalid access code.');
+      }
+    } catch (err) {
+      console.error('Failed to submit access code:', err);
+      setAccessError('Unable to validate access code. Check backend connectivity.');
+    } finally {
+      setIsSubmittingAccessCode(false);
+    }
+  };
+
   const fetchSessions = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/sessions`);
@@ -92,11 +165,26 @@ export default function Home() {
   };
 
   useEffect(() => {
+    const savedAccess = sessionStorage.getItem(ACCESS_GRANTED_STORAGE_KEY);
+    if (savedAccess === 'granted') {
+      setIsAccessGranted(true);
+      setIsCheckingAccess(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void fetchAccessStatus().finally(() => setIsCheckingAccess(false));
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!isAccessGranted) return;
     const timer = setTimeout(() => {
       void fetchSessions();
     }, 0);
     return () => clearTimeout(timer);
-  }, []);
+  }, [isAccessGranted]);
 
   useEffect(() => {
     return () => {
@@ -123,6 +211,7 @@ export default function Home() {
   };
 
   const startWorkflow = (userPrompt: string, sessionId: string | null = null, isReconnect = false) => {
+    if (!isAccessGranted) return;
     if (isSimulating && !isReconnect) return;
 
     currentPromptRef.current = userPrompt;
@@ -270,6 +359,86 @@ export default function Home() {
     };
     return colors[stage] || '#8A8DAA';
   };
+
+  if (isCheckingAccess) {
+    return (
+      <div style={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#060914', color: '#fff' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontFamily: 'monospace' }}>
+          <Loader2 size={20} className="animate-spin" color="#00E5FF" />
+          <span>Checking access status...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAccessGranted) {
+    const exhausted = !!accessInfo?.exhausted;
+    return (
+      <div style={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#060914', padding: '24px' }}>
+        <div style={{ width: '100%', maxWidth: '520px', background: 'rgba(20,24,34,0.95)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '16px', padding: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+            <BrainCircuit size={20} color="#00E5FF" />
+            <h1 style={{ margin: 0, color: '#fff', fontFamily: 'monospace', fontSize: '20px' }}>Access Code Required</h1>
+          </div>
+
+          <p style={{ marginTop: 0, color: 'rgba(255,255,255,0.75)', fontSize: '14px', lineHeight: '1.6' }}>
+            Enter one-time access code to unlock the Quantum Circuit Orchestrator.
+          </p>
+
+          {typeof accessInfo?.remaining === 'number' && (
+            <p style={{ color: exhausted ? '#FF1744' : '#00E5FF', fontSize: '13px', marginBottom: '14px' }}>
+              Remaining codes: {accessInfo.remaining}
+            </p>
+          )}
+
+          {exhausted ? (
+            <div style={{ padding: '14px', borderRadius: '10px', border: '1px solid rgba(255,23,68,0.4)', background: 'rgba(255,23,68,0.1)', color: '#FF8A80', fontSize: '14px' }}>
+              All access codes are exhausted. Ask admin to reset codes.
+            </div>
+          ) : (
+            <form onSubmit={submitAccessCode} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <input
+                type="text"
+                value={accessCode}
+                onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                placeholder="QCS-XXXX-XXXX"
+                style={{
+                  width: '100%',
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  background: 'rgba(0,0,0,0.35)',
+                  color: '#fff',
+                  fontFamily: 'monospace',
+                  fontSize: '14px',
+                }}
+              />
+              <button
+                type="submit"
+                disabled={isSubmittingAccessCode || !accessCode.trim()}
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  background: isSubmittingAccessCode ? 'rgba(0,229,255,0.35)' : 'linear-gradient(135deg, #00E5FF, #00B8D4)',
+                  color: '#041018',
+                  fontWeight: 700,
+                  cursor: isSubmittingAccessCode ? 'not-allowed' : 'pointer',
+                  fontFamily: 'monospace',
+                }}
+              >
+                {isSubmittingAccessCode ? 'Validating...' : 'Unlock Platform'}
+              </button>
+            </form>
+          )}
+
+          {accessError && (
+            <p style={{ marginTop: '12px', marginBottom: 0, color: '#FF8A80', fontSize: '13px' }}>{accessError}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position: 'relative', minHeight: '100vh', width: '100vw', overflowX: 'hidden' }}>
