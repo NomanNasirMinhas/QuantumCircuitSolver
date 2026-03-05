@@ -3,24 +3,30 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bot, CheckCircle, AlertTriangle, Loader2, Activity } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 export type QuantumEvent = {
-  type: 'progress' | 'success' | 'error' | 'warning' | 'complete' | 'fatal';
+  type: 'progress' | 'success' | 'error' | 'warning' | 'complete' | 'fatal' | 'content_chunk';
   agent: string;
   status: string;
-  details?: any;
-  data?: any;
+  details?: unknown;
+  data?: unknown;
   restored?: boolean;
   session_id?: string;
+  content_type?: 'text' | 'image' | 'audio' | 'video';
+  content?: string;
+  mime_type?: string;
+  label?: string;
 };
 
-const typeConfig: Record<string, { color: string; glow: string; Icon: any }> = {
+const typeConfig: Record<string, { color: string; glow: string; Icon: LucideIcon }> = {
   progress: { color: '#00E5FF', glow: 'rgba(0, 229, 255, 0.4)', Icon: Loader2 },
   success: { color: '#00E676', glow: 'rgba(0, 230, 118, 0.4)', Icon: CheckCircle },
   error: { color: '#FF1744', glow: 'rgba(255, 23, 68, 0.4)', Icon: AlertTriangle },
   fatal: { color: '#FF1744', glow: 'rgba(255, 23, 68, 0.4)', Icon: AlertTriangle },
   warning: { color: '#FFD600', glow: 'rgba(255, 214, 0, 0.4)', Icon: AlertTriangle },
   complete: { color: '#D500F9', glow: 'rgba(213, 0, 249, 0.4)', Icon: Bot },
+  content_chunk: { color: '#64FFDA', glow: 'rgba(100, 255, 218, 0.4)', Icon: Activity },
 };
 
 function EventNode({ ev, index, isLast }: { ev: QuantumEvent; index: number; isLast: boolean }) {
@@ -149,10 +155,10 @@ function EventNode({ ev, index, isLast }: { ev: QuantumEvent; index: number; isL
                 #{index + 1}
               </span>
             </div>
-            <p style={{ fontSize: '13px', color: '#c0c3db', lineHeight: '1.5', margin: 0, wordBreak: 'break-word' }}>
-              {ev.status}
+            <p style={{ fontSize: '13px', color: '#c0c3db', lineHeight: '1.5', margin: 0, overflowWrap: 'anywhere' }}>
+              {String(ev.status)}
             </p>
-            {ev.details && (
+            {Boolean(ev.details) && (
               <div style={{
                 marginTop: '10px',
                 padding: '8px',

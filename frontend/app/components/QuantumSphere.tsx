@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -64,7 +64,6 @@ function createParticleTexture(): THREE.CanvasTexture {
 
 // Pre-compute all data outside the component (pure, deterministic)
 const INIT = initParticleData();
-const PARTICLE_TEXTURE = typeof document !== 'undefined' ? createParticleTexture() : null;
 
 const STATE_COLORS_1: Record<string, THREE.Color> = {
   idle: new THREE.Color('#7B2FBE'),
@@ -98,6 +97,10 @@ export default function QuantumParticleField({ state }: { state: 'idle' | 'gener
   const pointsRef = useRef<THREE.Points>(null);
   const linesRef = useRef<THREE.LineSegments>(null);
   const coreRef = useRef<THREE.Mesh>(null);
+  const particleTexture = useMemo(
+    () => (typeof document === 'undefined' ? null : createParticleTexture()),
+    []
+  );
 
   // Mutable buffers stored in refs so useFrame can write into them freely
   const positionsRef = useRef(new Float32Array(INIT.positions));
@@ -120,6 +123,12 @@ export default function QuantumParticleField({ state }: { state: 'idle' | 'gener
       geo.setAttribute('color', new THREE.BufferAttribute(lineColRef.current, 3));
     }
   }, []);
+
+  useEffect(() => {
+    return () => {
+      particleTexture?.dispose();
+    };
+  }, [particleTexture]);
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
@@ -230,7 +239,7 @@ export default function QuantumParticleField({ state }: { state: 'idle' | 'gener
           opacity={0.55}
           sizeAttenuation
           size={1.8}
-          map={PARTICLE_TEXTURE}
+          map={particleTexture ?? undefined}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
         />

@@ -7,11 +7,11 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { Canvas } from '@react-three/fiber';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, BrainCircuit, Play, Terminal, XCircle, Lightbulb, Pause, Loader2, Send } from 'lucide-react';
-import { ReactFlow, Background, Controls, Edge, Position, MarkerType } from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
+import { Activity, BrainCircuit, Play, Terminal, XCircle, Lightbulb, Loader2, Send } from 'lucide-react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import QuantumParticleField from './components/QuantumSphere';
-import { QuantumEvent } from './components/EventTimeline';
+import EventTimeline, { QuantumEvent } from './components/EventTimeline';
 
 type SessionSummary = {
   session_id: string;
@@ -25,32 +25,62 @@ type SessionSummary = {
 type FinalResultData = {
   metadata?: { algorithm: string; qubits: number };
   quantum_story_context?: string;
+  gemini_interleaved_narrative?: string;
+  gemini_interleaved_images?: string[];
   complete_code?: string;
   algorithm_explanation?: string;
   video_prompt?: string;
+  imagen_graphic_prompt?: string;
   qiskit_circuit_diagram?: string;
+  generated_illustration?: string;
+  generated_illustration_mime?: string;
+  generated_video?: string;
+  generated_video_mime?: string;
+  generated_video_uri?: string;
   result_diagram?: string;
   narrative_audio?: string;
+  narrative_audio_mime?: string;
   nisq_warning?: string;
 };
+
+type ContentChunk = {
+  agent: string;
+  content_type: 'text' | 'image' | 'audio' | 'video';
+  content: string;
+  mime_type?: string;
+  label?: string;
+};
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/simulate';
+const MAX_WS_RECONNECT_ATTEMPTS = 3;
+
+const PRESET_PROMPTS = [
+  'Find the shortest path in a 10-node network using a Grover-style search strategy.',
+  'Factor the number 15 and explain the quantum logic pedagogically.',
+  'Simulate the hydrogen molecule ground state using a compact VQE ansatz.',
+  'Solve a 4-city traveling salesman problem using a QAOA-inspired circuit.',
+];
 
 export default function Home() {
   const [prompt, setPrompt] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
   const [events, setEvents] = useState<QuantumEvent[]>([]);
+  const [contentChunks, setContentChunks] = useState<ContentChunk[]>([]);
   const [finalResult, setFinalResult] = useState<FinalResultData | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [showSessionPanel, setShowSessionPanel] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
-
-  // Audio Player State
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const workflowFinishedRef = useRef(false);
+  const currentPromptRef = useRef('');
+  const currentSessionIdRef = useRef<string | null>(null);
 
   const fetchSessions = async () => {
     try {
-      const res = await fetch('http://localhost:8000/sessions');
+      const res = await fetch(`${API_BASE_URL}/sessions`);
       if (res.ok) {
         const data = await res.json();
         setSessions(data);
@@ -61,14 +91,28 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetchSessions(); 
+    const timer = setTimeout(() => {
+      void fetchSessions();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+        wsRef.current.close();
+      }
+    };
   }, []);
 
 
 
   const deleteSession = async (sessionId: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/sessions/${sessionId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, { method: 'DELETE' });
       if (res.ok) {
         fetchSessions();
       }
@@ -77,45 +121,91 @@ export default function Home() {
     }
   };
 
-  const startWorkflow = (userPrompt: string, sessionId: string | null = null) => {
-    if (isSimulating) return;
+  const startWorkflow = (userPrompt: string, sessionId: string | null = null, isReconnect = false) => {
+    if (isSimulating && !isReconnect) return;
 
-    setIsSimulating(true);
-    setEvents([]);
-    setFinalResult(null);
-    setShowSessionPanel(false);
+    currentPromptRef.current = userPrompt;
 
-    // Stop and reset audio if playing
-    if (audioRef.current && isPlayingAudio) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      setIsPlayingAudio(false);
+    if (!isReconnect) {
+      currentSessionIdRef.current = sessionId;
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+      }
+      reconnectAttemptsRef.current = 0;
+      workflowFinishedRef.current = false;
+      setIsSimulating(true);
+      setEvents([]);
+      setContentChunks([]);
+      setFinalResult(null);
+      setShowSessionPanel(false);
+    } else {
+      if (sessionId) {
+        currentSessionIdRef.current = sessionId;
+      }
+      setIsSimulating(true);
     }
 
-    const ws = new WebSocket('ws://localhost:8000/ws/simulate');
+    const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ prompt: userPrompt, session_id: sessionId }));
+      const connectedAttempt = reconnectAttemptsRef.current;
+      reconnectAttemptsRef.current = 0;
+      const payload = {
+        prompt: currentPromptRef.current,
+        session_id: currentSessionIdRef.current ?? sessionId,
+      };
+      ws.send(JSON.stringify(payload));
+      if (isReconnect) {
+        setEvents((prev) => [
+          ...prev,
+          {
+            type: 'progress',
+            agent: 'Network',
+            status: `Reconnected (attempt ${connectedAttempt})`,
+          },
+        ]);
+      }
     };
 
     ws.onmessage = (event) => {
       try {
         const data: QuantumEvent = JSON.parse(event.data);
+        if (data.session_id) {
+          currentSessionIdRef.current = data.session_id;
+        }
 
-        // Filter out agent thinking trace logging
         if (data.type === 'progress' && data.status.startsWith('T')) return;
 
+        if (data.type === 'content_chunk' && data.content_type && data.content) {
+          const chunkType = data.content_type as ContentChunk['content_type'];
+          const chunkContent = data.content as string;
+          setContentChunks((prev) => [
+            ...prev,
+            {
+              agent: data.agent,
+              content_type: chunkType,
+              content: chunkContent,
+              mime_type: data.mime_type,
+              label: data.label,
+            },
+          ]);
+          setEvents((prev) => [...prev, data]);
+          return;
+        }
+
         if (data.type === 'complete' && data.data) {
+          workflowFinishedRef.current = true;
           setFinalResult(data.data as FinalResultData);
           setIsSimulating(false);
           ws.close();
-          fetchSessions(); // Refresh — completed sessions get cleaned up
+          fetchSessions();
         } else if (data.type === 'fatal') {
+          workflowFinishedRef.current = true;
           setEvents((prev) => [...prev, data]);
           setIsSimulating(false);
           ws.close();
-          fetchSessions(); // A checkpoint may have been saved before the error
+          fetchSessions();
         } else {
           setEvents((prev) => [...prev, data]);
         }
@@ -125,14 +215,42 @@ export default function Home() {
     };
 
     ws.onerror = () => {
-      setEvents((prev) => [...prev, { type: 'fatal', agent: 'Network', status: 'WebSocket connection error. Is the backend running?' }]);
-      setIsSimulating(false);
-      fetchSessions();
+      console.error('WebSocket error');
     };
 
     ws.onclose = () => {
-      setIsSimulating(prev => (prev === true ? false : prev)); // If still simulating, set to false
       fetchSessions();
+      if (workflowFinishedRef.current) {
+        setIsSimulating(false);
+        return;
+      }
+
+      if (reconnectAttemptsRef.current >= MAX_WS_RECONNECT_ATTEMPTS) {
+        setEvents((prev) => [
+          ...prev,
+          {
+            type: 'fatal',
+            agent: 'Network',
+            status: `WebSocket disconnected. Retry limit (${MAX_WS_RECONNECT_ATTEMPTS}) reached.`,
+          },
+        ]);
+        setIsSimulating(false);
+        return;
+      }
+
+      reconnectAttemptsRef.current += 1;
+      const delayMs = 2 ** (reconnectAttemptsRef.current - 1) * 1000;
+      setEvents((prev) => [
+        ...prev,
+        {
+          type: 'warning',
+          agent: 'Network',
+          status: `Connection lost. Reconnecting in ${delayMs / 1000}s (attempt ${reconnectAttemptsRef.current}/${MAX_WS_RECONNECT_ATTEMPTS})...`,
+        },
+      ]);
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        startWorkflow(currentPromptRef.current, currentSessionIdRef.current, true);
+      }, delayMs);
     };
   };
 
@@ -164,17 +282,6 @@ export default function Home() {
       COMPLETED: '#00E5FF',
     };
     return colors[stage] || '#8A8DAA';
-  };
-
-  const handleAudioPlayPause = () => {
-    if (audioRef.current) {
-      if (isPlayingAudio) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-      setIsPlayingAudio(!isPlayingAudio);
-    }
   };
 
   return (
@@ -324,55 +431,48 @@ export default function Home() {
             {events.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: '400px' }}
+                animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
-                style={{ background: 'rgba(20, 24, 34, 0.8)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden' }}
+                style={{ overflow: 'hidden' }}
               >
-                <div style={{ width: '100%', height: '400px' }}>
-                  <ReactFlow
-                    nodes={events.map((event, i) => ({
-                      id: `node-${i}`,
-                      position: { x: 50 + (i % 2) * 150, y: 50 + i * 120 },
-                      targetPosition: Position.Top,
-                      sourcePosition: Position.Bottom,
-                      draggable: true,
-                      style: {
-                        background: 'rgba(0,0,0,0.8)',
-                        color: '#fff',
-                        border: `2px solid ${event.type === 'error' ? '#FF1744' : event.type === 'warning' ? '#FFD600' : '#00E5FF'}`,
-                        borderRadius: '8px',
-                        padding: '12px',
-                        width: '280px',
-                        fontSize: '12px'
-                      },
-                      data: {
-                        label: (
-                          <div style={{ textAlign: 'left' }}>
-                            <div style={{ fontSize: '10px', color: '#00E5FF', marginBottom: '4px', textTransform: 'uppercase' }}>{event.agent} | {event.type}</div>
-                            <div style={{ fontFamily: 'monospace', opacity: 0.9 }}>{event.status}</div>
-                          </div>
-                        )
-                      }
-                    }))}
-                    edges={events.map((event, i) => {
-                      if (i === 0) return null;
-                      return {
-                        id: `edge-${i-1}-${i}`,
-                        source: `node-${i-1}`,
-                        target: `node-${i}`,
-                        animated: true,
-                        style: { stroke: '#00E5FF', strokeWidth: 2 },
-                        markerEnd: { type: MarkerType.ArrowClosed, color: '#00E5FF' }
-                      };
-                    }).filter(Boolean) as Edge[]}
-                    fitView
-                    nodesDraggable={true}
-                    panOnDrag={true}
-                  >
-                    <Background color="#fff" gap={16} size={1} />
-                    <Controls />
-                  </ReactFlow>
-                </div>
+                <EventTimeline events={events} />
+              </motion.div>
+            )}
+
+            {contentChunks.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}
+              >
+                <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Live Interleaved Output</h2>
+                {contentChunks.map((chunk, i) => (
+                  <div key={`${chunk.content_type}-${i}`} style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '14px' }}>
+                    <div style={{ fontSize: '11px', color: '#8A8DAA', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
+                      {chunk.agent} • {chunk.label || chunk.content_type}
+                    </div>
+                    {chunk.content_type === 'text' && (
+                      <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '14px', lineHeight: '1.6' }}>
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {chunk.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                    {chunk.content_type === 'image' && (
+                      <img
+                        src={`data:${chunk.mime_type || 'image/png'};base64,${chunk.content}`}
+                        alt={chunk.label || 'Generated visual chunk'}
+                        style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}
+                      />
+                    )}
+                    {chunk.content_type === 'audio' && (
+                      <audio controls style={{ width: '100%' }} src={`data:${chunk.mime_type || 'audio/mpeg'};base64,${chunk.content}`} />
+                    )}
+                    {chunk.content_type === 'video' && (
+                      <video controls style={{ width: '100%', borderRadius: '8px' }} src={`data:${chunk.mime_type || 'video/mp4'};base64,${chunk.content}`} />
+                    )}
+                  </div>
+                ))}
               </motion.div>
             )}
 
@@ -410,6 +510,20 @@ export default function Home() {
                   </div>
                 )}
 
+                {finalResult.gemini_interleaved_narrative && (
+                  <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                      <Activity size={20} color="#64FFDA" />
+                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Gemini Interleaved Narrative</h2>
+                    </div>
+                    <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '14px', lineHeight: '1.6' }}>
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {finalResult.gemini_interleaved_narrative}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+
                 {/* Multimedia Panel */}
                 <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
@@ -417,57 +531,56 @@ export default function Home() {
                     <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Multimedia Assets</h2>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
-                    
-                    {/* Audio Player */}
                     <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ fontSize: '12px', color: '#FFD600', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Narrative Audio</div>
                       {finalResult.narrative_audio ? (
-                        finalResult.narrative_audio.includes(' ') || finalResult.narrative_audio.length < 500 ? (
-                            <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic', maxHeight: '150px', overflowY: 'auto' }} className="custom-scrollbar">
-                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{finalResult.narrative_audio}</ReactMarkdown>
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                              <audio 
-                                ref={audioRef} 
-                                src={`data:audio/mp3;base64,${finalResult.narrative_audio}`} 
-                                onEnded={() => setIsPlayingAudio(false)} 
-                                onPause={() => setIsPlayingAudio(false)}
-                                onPlay={() => setIsPlayingAudio(true)}
-                                style={{ display: 'none' }} 
-                              />
-                              <button 
-                                onClick={handleAudioPlayPause}
-                                style={{ 
-                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                  padding: '16px', background: 'rgba(0, 229, 255, 0.1)', border: '1px solid rgba(0, 229, 255, 0.3)',
-                                  borderRadius: '50%', color: '#00E5FF', cursor: 'pointer', transition: 'all 0.2s'
-                                }}
-                              >
-                                {isPlayingAudio ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: '4px' }} />}
-                              </button>
-                              <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.8)', fontFamily: 'monospace' }}>
-                                {isPlayingAudio ? 'Playing Narrative...' : 'Play Scenario Narrative'}
-                              </div>
-                            </div>
-                          )
+                        <audio controls style={{ width: '100%' }} src={`data:${finalResult.narrative_audio_mime || 'audio/wav'};base64,${finalResult.narrative_audio}`} />
                       ) : (
                         <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No audio generated</div>
                       )}
                     </div>
 
-                    {/* Video Prompt */}
                     <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
-                      <div style={{ fontSize: '12px', color: '#D500F9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Veo Video Prompt</div>
-                      {finalResult.video_prompt ? (
-                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic', borderLeft: '2px solid #D500F9', paddingLeft: '12px', maxHeight: '150px', overflowY: 'auto' }} className="custom-scrollbar">
-                          &quot;{finalResult.video_prompt}&quot;
-                        </div>
+                      <div style={{ fontSize: '12px', color: '#00E5FF', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Imagen Illustration</div>
+                      {finalResult.generated_illustration ? (
+                        <img
+                          src={`data:${finalResult.generated_illustration_mime || 'image/png'};base64,${finalResult.generated_illustration}`}
+                          alt="Imagen-generated conceptual illustration"
+                          style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}
+                        />
                       ) : (
-                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No prompt generated</div>
+                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No Imagen illustration generated</div>
                       )}
                     </div>
 
+                    {finalResult.gemini_interleaved_images && finalResult.gemini_interleaved_images.length > 0 && (
+                      <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
+                        <div style={{ fontSize: '12px', color: '#64FFDA', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Gemini Native Image</div>
+                        <img
+                          src={`data:image/png;base64,${finalResult.gemini_interleaved_images[0]}`}
+                          alt="Gemini interleaved generated visual"
+                          style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}
+                        />
+                      </div>
+                    )}
+
+                    <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ fontSize: '12px', color: '#D500F9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Veo Output</div>
+                      {finalResult.generated_video ? (
+                        <video controls style={{ width: '100%', borderRadius: '8px' }} src={`data:${finalResult.generated_video_mime || 'video/mp4'};base64,${finalResult.generated_video}`} />
+                      ) : finalResult.generated_video_uri ? (
+                        <a href={finalResult.generated_video_uri} target="_blank" rel="noreferrer" style={{ color: '#00E5FF', fontSize: '13px' }}>
+                          Open generated video URL
+                        </a>
+                      ) : (
+                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No video generated</div>
+                      )}
+                      {finalResult.video_prompt && (
+                        <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(255,255,255,0.65)', borderLeft: '2px solid #D500F9', paddingLeft: '10px' }}>
+                          Prompt: {finalResult.video_prompt}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -485,9 +598,14 @@ export default function Home() {
                       {/* Code Block */}
                       {finalResult.complete_code && (
                         <div style={{ flex: 1, minHeight: '200px', background: '#0d1117', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', position: 'relative', display: 'flex' }}>
-                            <pre style={{ padding: '16px', margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.9)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflow: 'auto', width: '100%' }}>
-                              {finalResult.complete_code}
-                            </pre>
+                          <SyntaxHighlighter
+                            language="python"
+                            style={oneDark}
+                            customStyle={{ margin: 0, width: '100%', fontSize: '13px', padding: '16px', background: 'transparent' }}
+                            wrapLongLines={true}
+                          >
+                            {finalResult.complete_code}
+                          </SyntaxHighlighter>
                         </div>
                       )}
 
@@ -559,6 +677,33 @@ export default function Home() {
           className="glass-panel"
           style={{ padding: '8px', position: 'sticky', bottom: '24px', marginTop: 'auto' }}
         >
+          {!isSimulating && (
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '8px 8px 12px 8px' }}>
+              {PRESET_PROMPTS.map((preset, idx) => (
+                <button
+                  key={`preset-${idx}`}
+                  type="button"
+                  onClick={() => {
+                    setPrompt(preset);
+                    startWorkflow(preset);
+                  }}
+                  style={{
+                    border: '1px solid rgba(0, 229, 255, 0.35)',
+                    background: 'rgba(0, 229, 255, 0.08)',
+                    color: '#9CEFFF',
+                    padding: '8px 10px',
+                    borderRadius: '999px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                  title={preset}
+                >
+                  Preset {idx + 1}
+                </button>
+              ))}
+            </div>
+          )}
           <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '12px' }}>
             <input
               type="text"

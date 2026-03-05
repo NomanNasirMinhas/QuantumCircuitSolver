@@ -1,0 +1,8 @@
+google-genai==1.65.0
+fastapi==0.135.1
+uvicorn[standard]==0.41.0
+websockets==16.0
+matplotlib==3.10.8
+qiskit==2.3.0
+qiskit-aer==0.17.2
+python-dotenv==1.2.2

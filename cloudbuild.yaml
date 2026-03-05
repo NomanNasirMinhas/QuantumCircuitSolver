@@ -1,0 +1,37 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_IMAGE}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_IMAGE}
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image
+      - ${_IMAGE}
+      - --region
+      - ${_REGION}
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --set-env-vars
+      - CORS_ALLOW_ORIGINS=${_CORS_ORIGINS}
+
+substitutions:
+  _REGION: us-central1
+  _SERVICE_NAME: quantum-circuit-orchestrator
+  _IMAGE: us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/backend:latest
+  _CORS_ORIGINS: https://your-frontend-domain.example
+
+images:
+  - ${_IMAGE}
