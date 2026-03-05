@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d/Code/Personal/\"Quantum Circuit Solver\")",
+      "WebFetch(domain:google.github.io)"
+    ]
+  }
+}

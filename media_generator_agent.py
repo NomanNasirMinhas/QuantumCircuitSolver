@@ -8,8 +8,11 @@ import urllib.request
 import wave
 from typing import Any, Dict, List, Tuple
 
+from google.adk.tools import google_search
 from google import genai
 from google.genai import types
+
+from adk_runtime import ADKAgentRuntime
 
 SYSTEM_INSTRUCTION = """System Instruction: Quantum Media Producer
 Role: You are the Quantum Media Producer Agent, a world-class visual storyteller and prompt engineer. Your mission is to transform abstract quantum data (gates, circuits, and algorithms) into cinematic, metaphorical, and educational visual assets.
@@ -66,6 +69,38 @@ class MediaProducerAgent:
             ["gemini-2.5-pro-tts", "gemini-2.5-flash-preview-tts"],
         )
         self.tts_voice_name = os.getenv("GEMINI_TTS_VOICE", "Kore")
+        self.structured_runtime = ADKAgentRuntime(
+            name="media_structured_agent",
+            model=self.structured_model,
+            instruction=SYSTEM_INSTRUCTION,
+            tools=[google_search],
+            generate_content_config=types.GenerateContentConfig(
+                temperature=0.7,
+                top_p=0.95,
+                max_output_tokens=8192,
+                response_mime_type="application/json",
+            ),
+        )
+        self.interleaved_runtimes: List[Tuple[str, ADKAgentRuntime]] = []
+        for index, model in enumerate(self.interleaved_models):
+            self.interleaved_runtimes.append(
+                (
+                    model,
+                    ADKAgentRuntime(
+                        name=f"media_interleaved_agent_{index}",
+                        model=model,
+                        instruction=SYSTEM_INSTRUCTION,
+                        tools=[google_search],
+                        generate_content_config=types.GenerateContentConfig(
+                            temperature=0.8,
+                            top_p=0.95,
+                            max_output_tokens=4096,
+                            response_modalities=[types.Modality.TEXT, types.Modality.IMAGE],
+                            image_config=types.ImageConfig(aspect_ratio="16:9"),
+                        ),
+                    ),
+                )
+            )
 
     @staticmethod
     def _candidate_models(env_var: str, defaults: List[str]) -> List[str]:
@@ -169,34 +204,7 @@ class MediaProducerAgent:
             "Please generate the visual assets and audio script. IMPORTANT: Make the video prompt "
             "and audio script exceptionally specific to the user's problem and story_explanation."
         )
-
-        contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)])]
-        generate_content_config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            temperature=0.7,
-            top_p=0.95,
-            max_output_tokens=8192,
-            response_mime_type="application/json",
-        )
-
-        response = self.client.models.generate_content(
-            model=self.structured_model,
-            contents=contents,
-            config=generate_content_config,
-        )
-
-        try:
-            if not response.text:
-                return {
-                    "error": "Empty response from API (possibly safety blocked or resource exhausted).",
-                    "raw_output": str(response),
-                }
-            return json.loads(response.text)
-        except Exception as e:
-            return {
-                "error": f"Media agent failed to return JSON: {str(e)}",
-                "raw_output": getattr(response, "text", str(response)),
-            }
+        return self.structured_runtime.run_json(prompt_text)
 
     def generate_interleaved_story(self, mapping: dict, code: str) -> dict:
         summary = self._algo_summary(mapping)
@@ -205,24 +213,16 @@ class MediaProducerAgent:
             "Return rich storytelling text and image assets in the same response.\n"
             f"Context:\n{json.dumps(summary, indent=2)}"
         )
-        contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)])]
         errors: List[str] = []
 
-        for model in self.interleaved_models:
+        for model, runtime in self.interleaved_runtimes:
             try:
-                response = self.client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=0.8,
-                        top_p=0.95,
-                        max_output_tokens=4096,
-                        response_modalities=[types.Modality.TEXT, types.Modality.IMAGE],
-                        image_config=types.ImageConfig(aspect_ratio="16:9"),
-                    ),
-                )
-                narrative_segments, images = self._extract_interleaved_parts(response)
+                interleaved = runtime.run_interleaved(prompt_text)
+                if interleaved.get("error"):
+                    errors.append(f"{model}: {interleaved['error']}")
+                    continue
+                narrative_segments = interleaved.get("narrative_segments", [])
+                images = interleaved.get("assets", [])
                 if narrative_segments or images:
                     return {
                         "model": model,

@@ -1,7 +1,9 @@
-from google import genai
-from google.genai import types
 import os
-import json
+
+from google.adk.tools import google_search
+from google.genai import types
+
+from adk_runtime import ADKAgentRuntime
 
 SYSTEM_INSTRUCTION = """System Instruction: Quantum Logic Mapper
 Role:
@@ -38,41 +40,19 @@ Before finalizing, cross-reference your logic with the Google Search tool connec
 
 class TranslatorAgent:
     def __init__(self):
-        self.client = genai.Client(
-            vertexai=True,
-            project=os.environ.get("GCP_PROJECT_ID"),
-            location="global",
+        self.model = os.getenv("TRANSLATOR_MODEL", "gemini-3.1-flash-lite-preview")
+        self.runtime = ADKAgentRuntime(
+            name="translator_agent",
+            model=self.model,
+            instruction=SYSTEM_INSTRUCTION,
+            tools=[google_search],
+            generate_content_config=types.GenerateContentConfig(
+                temperature=0.5,
+                top_p=0.95,
+                max_output_tokens=8192,
+                response_mime_type="application/json",
+            ),
         )
-        self.model = "gemini-3.1-flash-lite-preview"
 
     def map_problem(self, user_input: str) -> dict:
-        contents = [
-          types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=user_input)]
-          ),
-        ]
-
-        tools = [types.Tool(google_search=types.GoogleSearch())]
-
-        generate_content_config = types.GenerateContentConfig(
-          system_instruction=SYSTEM_INSTRUCTION,
-          temperature=0.5,
-          top_p=0.95,
-          max_output_tokens=8192,
-          response_mime_type="application/json",
-          tools=tools,
-        )
-
-        response = self.client.models.generate_content(
-          model=self.model,
-          contents=contents,
-          config=generate_content_config,
-        )
-        
-        try:
-            if not response.text:
-                return {"error": "Empty response from API (possibly safety blocked or resource exhausted).", "raw_output": str(response)}
-            return json.loads(response.text)
-        except Exception as e:
-            return {"error": f"Failed to parse JSON: {str(e)}", "raw_output": getattr(response, 'text', str(response))}
+        return self.runtime.run_json(user_input)

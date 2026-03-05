@@ -1,7 +1,9 @@
-from google import genai
-from google.genai import types
 import os
 import json
+
+from google.genai import types
+
+from adk_runtime import ADKAgentRuntime
 
 SYSTEM_INSTRUCTION = """System Instruction: Quantum Evaluator & Validator
 Role:
@@ -34,12 +36,19 @@ Output Format (JSON only):
 
 class EvaluatorAgent:
     def __init__(self):
-        self.client = genai.Client(
-            vertexai=True,
-            project=os.environ.get("GCP_PROJECT_ID"),
-            location="global",
+        self.model = os.getenv("EVALUATOR_MODEL", "gemini-3.1-flash-lite-preview")
+        self.runtime = ADKAgentRuntime(
+            name="evaluator_agent",
+            model=self.model,
+            instruction=SYSTEM_INSTRUCTION,
+            generate_content_config=types.GenerateContentConfig(
+                temperature=0.1,
+                top_p=0.95,
+                max_output_tokens=8192,
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=2048),
+            ),
         )
-        self.model = "gemini-3.1-flash-lite-preview"
 
     def evaluate_simulation(self, code: str, run_results: dict) -> dict:
         # Only include the error or counts summary, not the full stdout if it's huge
@@ -51,31 +60,11 @@ class EvaluatorAgent:
         }
         prompt_text = f"Code to evaluate:\n```python\n{code}\n```\n\nSimulation results:\n{json.dumps(results_summary, indent=2)}\n\nPlease validate and return your verdict."
 
-        contents = [
-          types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=prompt_text)]
-          ),
-        ]
-
-        generate_content_config = types.GenerateContentConfig(
-          system_instruction=SYSTEM_INSTRUCTION,
-          temperature=0.1,
-          top_p=0.95,
-          max_output_tokens=8192,
-          response_mime_type="application/json",
-          thinking_config=types.ThinkingConfig(thinking_budget=2048),
-        )
-
-        response = self.client.models.generate_content(
-          model=self.model,
-          contents=contents,
-          config=generate_content_config,
-        )
-
-        try:
-            if not response.text:
-                return {"verdict": "FAIL", "validation_summary": "Empty response from API (possibly safety blocked or resource exhausted)."}
-            return json.loads(response.text)
-        except Exception as e:
-            return {"verdict": "FAIL", "validation_summary": f"Evaluator failed to output valid JSON: {str(e)}"}
+        result = self.runtime.run_json(prompt_text)
+        if result.get("error"):
+            return {
+                "verdict": "FAIL",
+                "validation_summary": result["error"],
+                "raw_output": result.get("raw_output", ""),
+            }
+        return result

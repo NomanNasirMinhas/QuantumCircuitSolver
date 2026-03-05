@@ -32,3 +32,35 @@ The user interacts with the system via a visually stunning **Next.js & React Thr
 - **3D Quantum Particle Field:** A dynamic, immersive background that reacts to the simulation state.
 - **Real-Time Execution Graph:** A live, re-arrangeable `React Flow` node graph that maps every websocket event, visually plotting the back-and-forth interactions and attempts among the agents.
 - **Multimodal Delivery:** Once the pipeline completes, the UI renders the final generated code, the plotted Qiskit `circuit_diagram`, a matplotlib-parsed `result_diagram` (Histogram), the video prompt, and plays the generated narrative audio script.
+
+## ADK Migration Status
+The backend agents are now implemented on **Google Agent Development Kit (ADK)**:
+
+- `TranslatorAgent` -> ADK `LlmAgent`
+- `ArchitectAgent` -> ADK `LlmAgent`
+- `ScientistAgent` -> ADK `LlmAgent`
+- `EvaluatorAgent` -> ADK `LlmAgent`
+- `MediaProducerAgent` structured brief + interleaved story -> ADK `LlmAgent`
+
+The orchestrator keeps the same method contracts and websocket protocol, but each agent call now runs through ADK `Runner` sessions.
+
+## Run Locally
+```bash
+pip install -r requirements.txt
+python orchestrator.py
+```
+
+## ADK App For Google Cloud
+An ADK-native deployable app is included at:
+
+- `adk_agents/quantum_orchestrator/agent.py`
+
+Run ADK API server locally:
+```bash
+adk api_server adk_agents --host 0.0.0.0 --port 8000
+```
+
+Deploy to Cloud Run from Google Console/Cloud Shell:
+```bash
+adk deploy cloud_run --project YOUR_PROJECT --region YOUR_REGION adk_agents/quantum_orchestrator
+```
