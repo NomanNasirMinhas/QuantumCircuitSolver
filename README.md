@@ -50,6 +50,45 @@ pip install -r requirements.txt
 python orchestrator.py
 ```
 
+## Deploy Custom Orchestrator To Google Cloud Run (Recommended)
+This deploys your current `orchestrator.py` + custom agents backend and the Next.js frontend.
+
+### One-command deploy (Cloud Shell)
+```bash
+export PROJECT_ID="your-gcp-project-id"
+export REGION="us-central1"
+export CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
+bash scripts/deploy-cloudrun.sh
+```
+
+### One-command deploy (PowerShell)
+```powershell
+$env:PROJECT_ID="your-gcp-project-id"
+$env:REGION="us-central1"
+$env:CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
+.\scripts\deploy-cloudrun.ps1
+```
+
+### What the script does
+1. Enables required APIs (`run`, `cloudbuild`, `artifactregistry`, `aiplatform`).
+2. Ensures Artifact Registry repo exists.
+3. Builds/deploys backend service from `cloudbuild.yaml`.
+4. Resolves backend URL and computes websocket URL (`wss://.../ws/simulate`).
+5. Builds/deploys frontend service from `frontend/cloudbuild.yaml` with correct runtime URLs.
+
+### Manual deploy (if needed)
+Backend:
+```bash
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_REGION=us-central1,_SERVICE_NAME=quantum-circuit-orchestrator,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/backend:latest,_CORS_ORIGINS=https://your-frontend-domain.example
+```
+
+Frontend:
+```bash
+gcloud builds submit frontend --config frontend/cloudbuild.yaml \
+  --substitutions=_REGION=us-central1,_SERVICE_NAME=quantum-circuit-frontend,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/frontend:latest,_API_BASE_URL=https://your-backend-url,_WS_URL=wss://your-backend-url/ws/simulate
+```
+
 ## ADK App For Google Cloud
 An ADK-native deployable app is included at:
 

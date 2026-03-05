@@ -24,14 +24,42 @@ steps:
       - --platform
       - managed
       - --allow-unauthenticated
+      - --timeout
+      - ${_TIMEOUT}
+      - --max-instances
+      - ${_MAX_INSTANCES}
+      - --memory
+      - ${_MEMORY}
+      - --cpu
+      - ${_CPU}
+      - --set-env-vars
+      - GCP_PROJECT_ID=$PROJECT_ID
+      - --set-env-vars
+      - GOOGLE_CLOUD_PROJECT=$PROJECT_ID
+      - --set-env-vars
+      - GOOGLE_CLOUD_LOCATION=${_GCP_LOCATION}
       - --set-env-vars
       - CORS_ALLOW_ORIGINS=${_CORS_ORIGINS}
+      - --set-env-vars
+      - MAX_PROMPT_LENGTH=${_MAX_PROMPT_LENGTH}
+      - --set-env-vars
+      - MAX_ACTIVE_WORKFLOWS_PER_IP=${_MAX_ACTIVE_WORKFLOWS_PER_IP}
+      - --set-env-vars
+      - DEBUG_RUNS_DIR=${_DEBUG_RUNS_DIR}
 
 substitutions:
   _REGION: us-central1
   _SERVICE_NAME: quantum-circuit-orchestrator
   _IMAGE: us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/backend:latest
   _CORS_ORIGINS: https://your-frontend-domain.example
+  _GCP_LOCATION: global
+  _MAX_PROMPT_LENGTH: "2000"
+  _MAX_ACTIVE_WORKFLOWS_PER_IP: "1"
+  _DEBUG_RUNS_DIR: /tmp/debug_runs
+  _TIMEOUT: "3600"
+  _MAX_INSTANCES: "1"
+  _MEMORY: 4Gi
+  _CPU: "2"
 
 images:
   - ${_IMAGE}

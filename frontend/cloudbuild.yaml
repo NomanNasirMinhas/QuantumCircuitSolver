@@ -28,6 +28,14 @@ steps:
       - --platform
       - managed
       - --allow-unauthenticated
+      - --max-instances
+      - ${_MAX_INSTANCES}
+      - --memory
+      - ${_MEMORY}
+      - --cpu
+      - ${_CPU}
+      - --timeout
+      - ${_TIMEOUT}
 
 substitutions:
   _REGION: us-central1
@@ -35,6 +43,10 @@ substitutions:
   _IMAGE: us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/frontend:latest
   _API_BASE_URL: https://your-backend-cloud-run-url
   _WS_URL: wss://your-backend-cloud-run-url/ws/simulate
+  _MAX_INSTANCES: "2"
+  _MEMORY: 1Gi
+  _CPU: "1"
+  _TIMEOUT: "900"
 
 images:
   - ${_IMAGE}
