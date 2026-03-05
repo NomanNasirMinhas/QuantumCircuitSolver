@@ -75,6 +75,7 @@ $env:ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
 - Backend starts with 5 hardcoded one-time access codes.
 - Frontend requires a valid code before showing the main prompt/agent screen.
 - On successful validation, code is consumed and cannot be reused.
+- One consumed code grants exactly one prompt run.
 - When all codes are used, frontend shows "all codes exhausted, ask admin to reset."
 
 Default initial codes:
@@ -94,6 +95,14 @@ curl "https://YOUR_BACKEND_URL/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/a
 ```
 
 This returns a freshly generated set of 5 new access codes.
+
+### Admin list valid codes route
+The backend exposes another long random endpoint to list currently valid (unused) codes:
+- Default: `/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid`
+
+```bash
+curl "https://YOUR_BACKEND_URL/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid?master_password=YOUR_MASTER_PASSWORD"
+```
 
 ### What the script does
 1. Enables required APIs (`run`, `cloudbuild`, `artifactregistry`, `aiplatform`).

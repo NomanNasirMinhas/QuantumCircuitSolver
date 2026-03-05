@@ -8,6 +8,7 @@ param(
   [string]$GcpLocation = $(if ($env:GCP_LOCATION) { $env:GCP_LOCATION } else { "global" }),
   [string]$AccessCodeMasterPassword = $(if ($env:ACCESS_CODE_MASTER_PASSWORD) { $env:ACCESS_CODE_MASTER_PASSWORD } else { "change-this-master-password" }),
   [string]$AccessCodeResetEndpoint = $(if ($env:ACCESS_CODE_RESET_ENDPOINT) { $env:ACCESS_CODE_RESET_ENDPOINT } else { "/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset" }),
+  [string]$AccessCodeListEndpoint = $(if ($env:ACCESS_CODE_LIST_ENDPOINT) { $env:ACCESS_CODE_LIST_ENDPOINT } else { "/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid" }),
   [string]$AccessCodeStateFile = $(if ($env:ACCESS_CODE_STATE_FILE) { $env:ACCESS_CODE_STATE_FILE } else { "/tmp/access_codes_state.json" })
 )
 
@@ -51,7 +52,7 @@ if (-not $repoExists) {
 }
 
 Write-Host "==> Deploying backend service: $BackendService"
-$backendSubs = "_REGION=$Region,_SERVICE_NAME=$BackendService,_IMAGE=$backendImage,_CORS_ORIGINS=$CorsAllowOrigins,_GCP_LOCATION=$GcpLocation,_ACCESS_CODE_MASTER_PASSWORD=$AccessCodeMasterPassword,_ACCESS_CODE_RESET_ENDPOINT=$AccessCodeResetEndpoint,_ACCESS_CODE_STATE_FILE=$AccessCodeStateFile"
+$backendSubs = "_REGION=$Region,_SERVICE_NAME=$BackendService,_IMAGE=$backendImage,_CORS_ORIGINS=$CorsAllowOrigins,_GCP_LOCATION=$GcpLocation,_ACCESS_CODE_MASTER_PASSWORD=$AccessCodeMasterPassword,_ACCESS_CODE_RESET_ENDPOINT=$AccessCodeResetEndpoint,_ACCESS_CODE_LIST_ENDPOINT=$AccessCodeListEndpoint,_ACCESS_CODE_STATE_FILE=$AccessCodeStateFile"
 gcloud builds submit `
   --config cloudbuild.yaml `
   --substitutions $backendSubs `

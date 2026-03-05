@@ -57,6 +57,7 @@ type AccessCodeResponse = {
   ok?: boolean;
   reason?: string;
   message?: string;
+  access_token?: string;
   total?: number;
   used?: number;
   remaining?: number;
@@ -66,7 +67,6 @@ type AccessCodeResponse = {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/simulate';
 const MAX_WS_RECONNECT_ATTEMPTS = 3;
-const ACCESS_GRANTED_STORAGE_KEY = 'qcs_access_granted_v1';
 
 const PRESET_PROMPTS = [
   'Find the shortest path in a 10-node network using a Grover-style search strategy.',
@@ -77,6 +77,7 @@ const PRESET_PROMPTS = [
 
 export default function Home() {
   const [accessCode, setAccessCode] = useState('');
+  const [accessToken, setAccessToken] = useState('');
   const [isAccessGranted, setIsAccessGranted] = useState(false);
   const [isCheckingAccess, setIsCheckingAccess] = useState(true);
   const [isSubmittingAccessCode, setIsSubmittingAccessCode] = useState(false);
@@ -96,6 +97,7 @@ export default function Home() {
   const workflowFinishedRef = useRef(false);
   const currentPromptRef = useRef('');
   const currentSessionIdRef = useRef<string | null>(null);
+  const currentAccessTokenRef = useRef('');
 
   const fetchAccessStatus = async () => {
     try {
@@ -133,8 +135,14 @@ export default function Home() {
       setAccessInfo(data);
 
       if (data.ok) {
+        const token = data.access_token || '';
+        if (!token) {
+          setAccessError('Access token was not returned by backend. Try again.');
+          return;
+        }
+        setAccessToken(token);
+        currentAccessTokenRef.current = token;
         setIsAccessGranted(true);
-        sessionStorage.setItem(ACCESS_GRANTED_STORAGE_KEY, 'granted');
         setAccessCode('');
         setAccessError('');
       } else if (data.reason === 'exhausted') {
@@ -165,13 +173,6 @@ export default function Home() {
   };
 
   useEffect(() => {
-    const savedAccess = sessionStorage.getItem(ACCESS_GRANTED_STORAGE_KEY);
-    if (savedAccess === 'granted') {
-      setIsAccessGranted(true);
-      setIsCheckingAccess(false);
-      return;
-    }
-
     const timer = setTimeout(() => {
       void fetchAccessStatus().finally(() => setIsCheckingAccess(false));
     }, 0);
@@ -211,7 +212,10 @@ export default function Home() {
   };
 
   const startWorkflow = (userPrompt: string, sessionId: string | null = null, isReconnect = false) => {
-    if (!isAccessGranted) return;
+    if (!isAccessGranted && !sessionId) {
+      setAccessError('Enter a fresh access code before running a prompt.');
+      return;
+    }
     if (isSimulating && !isReconnect) return;
 
     currentPromptRef.current = userPrompt;
@@ -240,9 +244,11 @@ export default function Home() {
     ws.onopen = () => {
       const connectedAttempt = reconnectAttemptsRef.current;
       reconnectAttemptsRef.current = 0;
+      const tokenForRequest = currentAccessTokenRef.current || accessToken;
       const payload = {
         prompt: currentPromptRef.current,
         session_id: currentSessionIdRef.current ?? sessionId,
+        access_token: sessionId ? undefined : tokenForRequest,
       };
       ws.send(JSON.stringify(payload));
       if (isReconnect) {
@@ -274,12 +280,20 @@ export default function Home() {
           workflowFinishedRef.current = true;
           setFinalResult(data.data as FinalResultData);
           setIsSimulating(false);
+          setIsAccessGranted(false);
+          setAccessToken('');
+          currentAccessTokenRef.current = '';
+          void fetchAccessStatus();
           ws.close();
           fetchSessions();
         } else if (data.type === 'fatal') {
           workflowFinishedRef.current = true;
           setEvents((prev) => [...prev, data]);
           setIsSimulating(false);
+          setIsAccessGranted(false);
+          setAccessToken('');
+          currentAccessTokenRef.current = '';
+          void fetchAccessStatus();
           ws.close();
           fetchSessions();
         } else {
@@ -360,6 +374,14 @@ export default function Home() {
     return colors[stage] || '#8A8DAA';
   };
 
+  const openAccessGateForNextPrompt = () => {
+    setEvents([]);
+    setFinalResult(null);
+    setPrompt('');
+    setAccessError('');
+    setShowSessionPanel(false);
+  };
+
   if (isCheckingAccess) {
     return (
       <div style={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#060914', color: '#fff' }}>
@@ -371,7 +393,7 @@ export default function Home() {
     );
   }
 
-  if (!isAccessGranted) {
+  if (!isAccessGranted && !isSimulating && !finalResult && events.length === 0) {
     const exhausted = !!accessInfo?.exhausted;
     return (
       <div style={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#060914', padding: '24px' }}>
@@ -474,6 +496,29 @@ export default function Home() {
             </p>
           </motion.div>
         </header>
+
+        {!isAccessGranted && !isSimulating && (
+          <div style={{ marginBottom: '20px', padding: '14px 16px', borderRadius: '12px', border: '1px solid rgba(255,193,7,0.35)', background: 'rgba(255,193,7,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ color: '#FFE082', fontSize: '13px' }}>
+              Access for the previous code has been consumed (one code = one prompt). Enter a new code to run another prompt.
+            </div>
+            <button
+              onClick={openAccessGateForNextPrompt}
+              style={{
+                border: '1px solid rgba(255,255,255,0.2)',
+                background: 'rgba(0,0,0,0.35)',
+                color: '#fff',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Enter New Code
+            </button>
+          </div>
+        )}
 
         {/* Resume Sessions Banner */}
         <AnimatePresence>

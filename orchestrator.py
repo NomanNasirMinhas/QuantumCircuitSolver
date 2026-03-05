@@ -43,6 +43,10 @@ ACCESS_CODE_RESET_ENDPOINT = os.getenv(
     "ACCESS_CODE_RESET_ENDPOINT",
     "/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset",
 )
+ACCESS_CODE_LIST_ENDPOINT = os.getenv(
+    "ACCESS_CODE_LIST_ENDPOINT",
+    "/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid",
+)
 INITIAL_ACCESS_CODES = [
     "QCS-ALPHA-7K2M",
     "QCS-BETA-9P4R",
@@ -80,6 +84,7 @@ class AccessCodeManager:
             "created_at": now,
             "updated_at": now,
             "codes": [{"code": code, "used": False, "used_at": None} for code in codes],
+            "grants": [],
         }
 
     def _ensure_initialized(self) -> None:
@@ -100,6 +105,9 @@ class AccessCodeManager:
         if "codes" not in state or not isinstance(state["codes"], list):
             state = self._build_state(self.initial_codes)
             self._write_state(state)
+        if "grants" not in state or not isinstance(state["grants"], list):
+            state["grants"] = []
+            self._write_state(state)
         return state
 
     def _write_state(self, state: Dict[str, Any]) -> None:
@@ -110,10 +118,18 @@ class AccessCodeManager:
     @staticmethod
     def _status_from_state(state: Dict[str, Any]) -> Dict[str, Any]:
         codes = state.get("codes", [])
+        grants = state.get("grants", [])
         total = len(codes)
         used = sum(1 for item in codes if item.get("used"))
         remaining = total - used
-        return {"total": total, "used": used, "remaining": remaining, "exhausted": remaining <= 0}
+        unused_grants = sum(1 for item in grants if not item.get("prompt_used"))
+        return {
+            "total": total,
+            "used": used,
+            "remaining": remaining,
+            "exhausted": remaining <= 0,
+            "pending_prompt_grants": unused_grants,
+        }
 
     @staticmethod
     def _generate_codes(count: int = 5) -> List[str]:
@@ -152,9 +168,55 @@ class AccessCodeManager:
 
             match["used"] = True
             match["used_at"] = self._utc_now()
+            access_token = secrets.token_urlsafe(24)
+            grants = state.setdefault("grants", [])
+            grants.append(
+                {
+                    "access_token": access_token,
+                    "created_at": self._utc_now(),
+                    "prompt_used": False,
+                    "prompt_used_at": None,
+                }
+            )
             self._write_state(state)
             next_status = self._status_from_state(state)
-            return {"ok": True, "reason": "consumed", "message": "Access granted.", **next_status}
+            return {
+                "ok": True,
+                "reason": "consumed",
+                "message": "Access granted. This token can run exactly one prompt.",
+                "access_token": access_token,
+                **next_status,
+            }
+
+    def consume_prompt_access(self, access_token: str) -> Dict[str, Any]:
+        token = (access_token or "").strip()
+        with self._lock:
+            state = self._read_state()
+            grants = state.setdefault("grants", [])
+            grant = None
+            for item in grants:
+                if item.get("access_token") == token:
+                    grant = item
+                    break
+
+            status = self._status_from_state(state)
+            if not grant:
+                return {"ok": False, "reason": "invalid_token", "message": "Missing or invalid prompt access token.", **status}
+            if grant.get("prompt_used"):
+                return {"ok": False, "reason": "token_used", "message": "This prompt access token has already been used.", **status}
+
+            grant["prompt_used"] = True
+            grant["prompt_used_at"] = self._utc_now()
+            self._write_state(state)
+            next_status = self._status_from_state(state)
+            return {"ok": True, "reason": "prompt_granted", "message": "Prompt access granted.", **next_status}
+
+    def list_valid_codes(self) -> Dict[str, Any]:
+        with self._lock:
+            state = self._read_state()
+            valid_codes = [item.get("code", "") for item in state.get("codes", []) if not item.get("used")]
+            status = self._status_from_state(state)
+            return {"valid_codes": valid_codes, **status}
 
     def reset_codes(self, count: int = 5) -> Dict[str, Any]:
         new_codes = self._generate_codes(count)
@@ -832,6 +894,21 @@ def reset_access_codes(master_password: str):
     }
 
 
+@app.get(ACCESS_CODE_LIST_ENDPOINT)
+def list_valid_access_codes(master_password: str):
+    if not ACCESS_CODE_MASTER_PASSWORD:
+        raise HTTPException(status_code=503, detail="Master password is not configured on the server.")
+    if master_password != ACCESS_CODE_MASTER_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+    listing = access_code_manager.list_valid_codes()
+    return {
+        "status": "ok",
+        "message": "Current valid access codes.",
+        **listing,
+        "list_endpoint": ACCESS_CODE_LIST_ENDPOINT,
+    }
+
+
 @app.websocket("/ws/simulate")
 async def websocket_simulate(websocket: WebSocket):
     await websocket.accept()
@@ -854,13 +931,37 @@ async def websocket_simulate(websocket: WebSocket):
         # Support both plain-text prompts and JSON payloads with optional session_id
         prompt = raw
         session_id = None
+        access_token = None
         try:
             payload = json.loads(raw)
             if isinstance(payload, dict):
                 prompt = payload.get("prompt", raw)
                 session_id = payload.get("session_id", None)
+                access_token = payload.get("access_token", None)
         except (json.JSONDecodeError, TypeError):
             pass  # treat as plain text prompt
+
+        is_resume_request = False
+        if session_id:
+            try:
+                is_resume_request = session_manager.load_session(session_id) is not None
+            except Exception:
+                is_resume_request = False
+
+        if not is_resume_request:
+            token_check = access_code_manager.consume_prompt_access(access_token or "")
+            if not token_check.get("ok"):
+                await websocket.send_json(
+                    {
+                        "type": "fatal",
+                        "agent": "AccessControl",
+                        "status": token_check.get("message", "Prompt access denied."),
+                        "reason": token_check.get("reason", "unknown"),
+                        "remaining_codes": token_check.get("remaining", 0),
+                        "codes_exhausted": token_check.get("exhausted", False),
+                    }
+                )
+                return
 
         prompt = (prompt or "").strip()
         if not prompt:
