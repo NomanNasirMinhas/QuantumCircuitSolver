@@ -1,8 +1,11 @@
 import base64
+import io
 import json
 import os
+import re
 import time
 import urllib.request
+import wave
 from typing import Any, Dict, List, Tuple
 
 from google import genai
@@ -128,6 +131,35 @@ class MediaProducerAgent:
                 if blob and isinstance(blob, (bytes, bytearray)) and str(mime).startswith("audio/"):
                     return bytes(blob), mime
         return b"", ""
+
+    @staticmethod
+    def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2) -> bytes:
+        with io.BytesIO() as buffer:
+            with wave.open(buffer, "wb") as wav_file:
+                wav_file.setnchannels(channels)
+                wav_file.setsampwidth(sample_width)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(pcm_bytes)
+            return buffer.getvalue()
+
+    @staticmethod
+    def _normalize_audio_blob(audio_bytes: bytes, mime_type: str) -> Tuple[bytes, str]:
+        mime = (mime_type or "").lower().strip()
+        if not audio_bytes:
+            return b"", ""
+        if "audio/l16" in mime or "audio/pcm" in mime:
+            sample_rate = 24000
+            channels = 1
+            rate_match = re.search(r"rate=(\d+)", mime)
+            channel_match = re.search(r"channels?=(\d+)", mime)
+            if rate_match:
+                sample_rate = int(rate_match.group(1))
+            if channel_match:
+                channels = int(channel_match.group(1))
+            return MediaProducerAgent._pcm_to_wav(audio_bytes, sample_rate=sample_rate, channels=channels), "audio/wav"
+        if mime in {"audio/wav", "audio/x-wav", "audio/wave", "audio/mpeg", "audio/mp3", "audio/ogg"}:
+            return audio_bytes, "audio/mpeg" if mime == "audio/mp3" else mime
+        return audio_bytes, "audio/wav"
 
     def generate_visuals(self, mapping: dict, code: str) -> dict:
         algo_summary = self._algo_summary(mapping)
@@ -335,10 +367,11 @@ class MediaProducerAgent:
                 )
                 audio_bytes, mime_type = self._extract_audio_blob(response)
                 if audio_bytes:
+                    normalized_bytes, normalized_mime = self._normalize_audio_blob(audio_bytes, mime_type)
                     return {
                         "model": model,
-                        "mime_type": mime_type or "audio/wav",
-                        "data": base64.b64encode(audio_bytes).decode("utf-8"),
+                        "mime_type": normalized_mime or "audio/wav",
+                        "data": base64.b64encode(normalized_bytes).decode("utf-8"),
                     }
                 errors.append(f"{model}: no audio blob in response")
             except Exception as e:

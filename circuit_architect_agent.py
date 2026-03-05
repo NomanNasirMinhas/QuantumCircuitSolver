@@ -40,7 +40,7 @@ class ArchitectAgent:
             project=os.environ.get("GCP_PROJECT_ID"),
             location="global",
         )
-        self.model = "gemini-3.1-flash-lite-preview"
+        self.model = "gemini-3.1-pro-preview"
 
     def generate_code(self, mapping: dict, feedback: dict = None) -> dict:
         # Build a lean prompt - only include the essential mapping fields

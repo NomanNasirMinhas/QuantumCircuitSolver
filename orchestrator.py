@@ -25,6 +25,10 @@ from session_manager import SessionManager
 STAGE_ORDER = ["CREATED", "TRANSLATED", "ARCHITECTED", "AUDITED", "EVALUATED", "COMPLETED"]
 MAX_PROMPT_LENGTH = int(os.getenv("MAX_PROMPT_LENGTH", "2000"))
 MAX_ACTIVE_WORKFLOWS_PER_IP = int(os.getenv("MAX_ACTIVE_WORKFLOWS_PER_IP", "1"))
+DEBUG_RUNS_DIR = os.getenv(
+    "DEBUG_RUNS_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_runs"),
+)
 
 
 def _parse_allowed_origins() -> List[str]:
@@ -32,6 +36,46 @@ def _parse_allowed_origins() -> List[str]:
     if not raw:
         return ["*"]
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def _ensure_run_dir(session_id: str) -> str:
+    path = os.path.join(DEBUG_RUNS_DIR, session_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _save_json(path: str, payload: Any) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def _save_text(path: str, content: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content or "")
+
+
+def _ext_from_mime(mime_type: str) -> str:
+    mime = (mime_type or "").lower().strip()
+    if "png" in mime:
+        return ".png"
+    if "jpeg" in mime or "jpg" in mime:
+        return ".jpg"
+    if "webp" in mime:
+        return ".webp"
+    if "mp4" in mime:
+        return ".mp4"
+    if "mpeg" in mime or "mp3" in mime:
+        return ".mp3"
+    if "wav" in mime or "l16" in mime or "pcm" in mime:
+        return ".wav"
+    return ".bin"
+
+
+def _save_base64_file(path: str, b64_data: str) -> None:
+    if not b64_data:
+        return
+    with open(path, "wb") as f:
+        f.write(base64.b64decode(b64_data))
 
 
 def _extract_histogram_from_stdout(output: str) -> Dict[str, Any]:
@@ -197,6 +241,13 @@ class QuantumOrchestrator:
         if not session_id:
             session_id = self.session_manager.create_session(user_input)
 
+        run_dir = _ensure_run_dir(session_id)
+        _save_text(os.path.join(run_dir, "input_prompt.txt"), user_input)
+        _save_json(
+            os.path.join(run_dir, "run_context.json"),
+            {"session_id": session_id, "resuming": resuming, "resume_stage": resume_stage},
+        )
+
         await event_callback({
             "type": "progress", "agent": "Orchestrator",
             "status": f"Starting Quantum Workflow for: '{user_input}'",
@@ -228,6 +279,7 @@ class QuantumOrchestrator:
             content=mapping.get("story_explanation", ""),
             label="Quantum story context",
         )
+        _save_json(os.path.join(run_dir, "mapping.json"), mapping)
 
         # --- STEP 2-4: ARCHITECTURE & VALIDATION LOOP ---
         attempt = session_data.get("attempt", 0) if resuming else 0
@@ -236,6 +288,7 @@ class QuantumOrchestrator:
         evaluator_report = session_data.get("evaluator_report") if resuming else None
         result_diagram_b64 = session_data.get("result_diagram_b64") if resuming else ""
         nisq_warning = session_data.get("nisq_warning") if resuming else None
+        actual_results = session_data.get("actual_results", {}) if resuming else {}
 
         # Determine where to resume inside the loop
         skip_architect = resuming and self._past_stage(resume_stage, "ARCHITECTED")
@@ -247,6 +300,7 @@ class QuantumOrchestrator:
             validated_code = session_data.get("code_package", {})
             evaluator_report = session_data.get("evaluator_report", {})
             result_diagram_b64 = session_data.get("result_diagram_b64", "")
+            actual_results = session_data.get("actual_results", {})
             await event_callback({"type": "success", "agent": "Evaluator", "status": "[Restored] Evaluator Validation Passed.", "restored": True})
         else:
             while attempt < self.max_retries:
@@ -269,6 +323,8 @@ class QuantumOrchestrator:
 
                     python_code = code_package.get('python_code', code_package.get('code', ''))
                     await event_callback({"type": "success", "agent": "Architect", "status": "Circuit generated successfully."})
+                    _save_json(os.path.join(run_dir, f"code_package_attempt_{attempt}.json"), code_package)
+                    _save_text(os.path.join(run_dir, f"qiskit_code_attempt_{attempt}.py"), python_code)
                     self.session_manager.checkpoint(session_id, "ARCHITECTED", {
                         "code_package": code_package,
                     }, attempt=attempt)
@@ -306,6 +362,7 @@ class QuantumOrchestrator:
                             "nisq_warning": nisq_warning,
                             "code_package": code_package,
                         }, attempt=attempt)
+                        _save_json(os.path.join(run_dir, f"scientific_report_attempt_{attempt}.json"), scientific_report)
 
                         # Scientist approved — proceed to Evaluator
                         pass
@@ -330,6 +387,8 @@ class QuantumOrchestrator:
                     await event_callback({"type": "warning", "agent": "Environment", "status": f"Code run hit error: {e}"})
 
                 evaluator_report = await asyncio.to_thread(self.evaluator.evaluate_simulation, python_code, actual_results)
+                _save_json(os.path.join(run_dir, f"simulation_results_attempt_{attempt}.json"), actual_results)
+                _save_json(os.path.join(run_dir, f"evaluator_report_attempt_{attempt}.json"), evaluator_report)
 
                 verdict = evaluator_report.get('verdict', 'FAIL')
                 if verdict == 'PASS':
@@ -358,6 +417,7 @@ class QuantumOrchestrator:
                         "evaluator_report": evaluator_report,
                         "code_package": code_package,
                         "result_diagram_b64": result_diagram_b64,
+                        "actual_results": actual_results,
                     }, attempt=attempt)
                     break
                 else:
@@ -372,50 +432,8 @@ class QuantumOrchestrator:
 
         # --- STEP 5: MEDIA PRODUCTION ---
         python_code = validated_code.get("python_code", validated_code.get("code", ""))
-        await event_callback({"type": "progress", "agent": "MediaProducer", "status": "Generating Gemini interleaved narrative (TEXT + IMAGE)..."})
+        await event_callback({"type": "progress", "agent": "MediaProducer", "status": "Generating multimedia brief (audio + Imagen + Veo prompts)..."})
         await asyncio.sleep(1)
-        interleaved_media = await asyncio.to_thread(
-            self.media_producer.generate_interleaved_story,
-            mapping,
-            python_code,
-        )
-        gemini_interleaved_narrative_segments: List[str] = []
-        gemini_interleaved_images: List[str] = []
-
-        if interleaved_media.get("error"):
-            await event_callback(
-                {
-                    "type": "warning",
-                    "agent": "MediaProducer",
-                    "status": f"Gemini interleaved generation unavailable: {interleaved_media['error']}",
-                }
-            )
-        else:
-            for idx, text_segment in enumerate(interleaved_media.get("narrative_segments", []), start=1):
-                gemini_interleaved_narrative_segments.append(text_segment)
-                await self._emit_content_chunk(
-                    event_callback,
-                    agent="MediaProducer",
-                    content_type="text",
-                    content=text_segment,
-                    label=f"Gemini narrative segment {idx}",
-                )
-
-            for idx, image in enumerate(interleaved_media.get("images", []), start=1):
-                image_b64 = image.get("data", "")
-                if not image_b64:
-                    continue
-                gemini_interleaved_images.append(image_b64)
-                await self._emit_content_chunk(
-                    event_callback,
-                    agent="MediaProducer",
-                    content_type="image",
-                    content=image_b64,
-                    mime_type=image.get("mime_type", "image/png"),
-                    label=f"Gemini native image {idx}",
-                )
-
-        await event_callback({"type": "progress", "agent": "MediaProducer", "status": "Generating Veo/Imagen production prompts..."})
         visual_brief = await asyncio.to_thread(self.media_producer.generate_visuals, mapping, python_code)
 
         if visual_brief.get("error"):
@@ -429,6 +447,7 @@ class QuantumOrchestrator:
             visual_brief = {}
         else:
             await event_callback({"type": "success", "agent": "MediaProducer", "status": "Cinematic visual briefs generated."})
+        _save_json(os.path.join(run_dir, "visual_brief.json"), visual_brief)
 
         # --- STEP 6: ASSET GENERATION ---
         await event_callback({"type": "progress", "agent": "Environment", "status": "Generating image/video/audio assets..."})
@@ -450,6 +469,7 @@ class QuantumOrchestrator:
                     mapping,
                     audio_script,
                 )
+                _save_json(os.path.join(run_dir, "tts_response.json"), tts_audio)
                 if tts_audio.get("error"):
                     await event_callback(
                         {
@@ -489,6 +509,7 @@ class QuantumOrchestrator:
         imagen_prompt = visual_brief.get("imagen_graphic_prompt", "")
         if imagen_prompt:
             imagen_response = await asyncio.to_thread(self.media_producer.generate_imagen_image, imagen_prompt)
+            _save_json(os.path.join(run_dir, "imagen_response.json"), imagen_response)
             if imagen_response.get("error"):
                 await event_callback(
                     {
@@ -512,6 +533,7 @@ class QuantumOrchestrator:
         veo_video_prompt = visual_brief.get("veo_video_prompt", visual_brief.get("video_prompt", ""))
         if veo_video_prompt:
             veo_response = await asyncio.to_thread(self.media_producer.generate_veo_video, veo_video_prompt)
+            _save_json(os.path.join(run_dir, "veo_response.json"), veo_response)
             if veo_response.get("error"):
                 await event_callback(
                     {
@@ -538,14 +560,19 @@ class QuantumOrchestrator:
 
 
         # FINAL OUTPUT ASSEMBLY
+        mapping_summary = {
+            "problem_class": mapping.get("problem_class", "Unknown"),
+            "identified_algorithm": mapping.get("identified_algorithm", mapping.get("algorithm", "Unknown")),
+            "why_this_algorithm": mapping.get("mathematical_justification", ""),
+            "how_user_problem_maps": mapping.get("story_explanation", ""),
+        }
         final_package = {
             "metadata": {
                 "algorithm": mapping.get('identified_algorithm', mapping.get('algorithm', 'Unknown')),
                 "qubits": mapping.get('qubit_requirement_estimate', mapping.get('qubits', 0))
             },
+            "problem_algorithm_mapping": mapping_summary,
             "quantum_story_context": mapping.get('story_explanation', ''),
-            "gemini_interleaved_narrative": "\n\n".join(gemini_interleaved_narrative_segments),
-            "gemini_interleaved_images": gemini_interleaved_images,
             "complete_code": python_code,
             "algorithm_explanation": validated_code.get('explanation', ''),
             "video_prompt": veo_video_prompt,
@@ -559,9 +586,34 @@ class QuantumOrchestrator:
             "result_diagram": result_diagram_b64,
             "narrative_audio": audio_b64,
             "narrative_audio_mime": audio_mime,
+            "simulation_results": actual_results,
             "nisq_warning": nisq_warning,
             "evaluator_report": evaluator_report,
         }
+
+        _save_json(os.path.join(run_dir, "final_package.json"), final_package)
+        _save_text(os.path.join(run_dir, "complete_qiskit_code.py"), python_code)
+        _save_json(os.path.join(run_dir, "problem_algorithm_mapping.json"), mapping_summary)
+
+        if circuit_b64:
+            _save_base64_file(os.path.join(run_dir, "qiskit_circuit_diagram.png"), circuit_b64)
+        if result_diagram_b64:
+            _save_base64_file(os.path.join(run_dir, "simulation_histogram.png"), result_diagram_b64)
+        if generated_illustration_b64:
+            _save_base64_file(
+                os.path.join(run_dir, f"generated_illustration{_ext_from_mime(generated_illustration_mime)}"),
+                generated_illustration_b64,
+            )
+        if generated_video_b64:
+            _save_base64_file(
+                os.path.join(run_dir, f"generated_video{_ext_from_mime(generated_video_mime)}"),
+                generated_video_b64,
+            )
+        if audio_b64:
+            _save_base64_file(
+                os.path.join(run_dir, f"narrative_audio{_ext_from_mime(audio_mime)}"),
+                audio_b64,
+            )
 
         # Mark session as COMPLETED and clean up
         self.session_manager.checkpoint(session_id, "COMPLETED", {})

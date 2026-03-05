@@ -24,9 +24,13 @@ type SessionSummary = {
 
 type FinalResultData = {
   metadata?: { algorithm: string; qubits: number };
+  problem_algorithm_mapping?: {
+    problem_class?: string;
+    identified_algorithm?: string;
+    why_this_algorithm?: string;
+    how_user_problem_maps?: string;
+  };
   quantum_story_context?: string;
-  gemini_interleaved_narrative?: string;
-  gemini_interleaved_images?: string[];
   complete_code?: string;
   algorithm_explanation?: string;
   video_prompt?: string;
@@ -40,15 +44,13 @@ type FinalResultData = {
   result_diagram?: string;
   narrative_audio?: string;
   narrative_audio_mime?: string;
+  simulation_results?: {
+    status?: string;
+    histogram?: Record<string, number>;
+    raw_output?: string;
+    error?: unknown;
+  };
   nisq_warning?: string;
-};
-
-type ContentChunk = {
-  agent: string;
-  content_type: 'text' | 'image' | 'audio' | 'video';
-  content: string;
-  mime_type?: string;
-  label?: string;
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
@@ -66,7 +68,6 @@ export default function Home() {
   const [prompt, setPrompt] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
   const [events, setEvents] = useState<QuantumEvent[]>([]);
-  const [contentChunks, setContentChunks] = useState<ContentChunk[]>([]);
   const [finalResult, setFinalResult] = useState<FinalResultData | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [showSessionPanel, setShowSessionPanel] = useState(false);
@@ -135,7 +136,6 @@ export default function Home() {
       workflowFinishedRef.current = false;
       setIsSimulating(true);
       setEvents([]);
-      setContentChunks([]);
       setFinalResult(null);
       setShowSessionPanel(false);
     } else {
@@ -177,20 +177,7 @@ export default function Home() {
 
         if (data.type === 'progress' && data.status.startsWith('T')) return;
 
-        if (data.type === 'content_chunk' && data.content_type && data.content) {
-          const chunkType = data.content_type as ContentChunk['content_type'];
-          const chunkContent = data.content as string;
-          setContentChunks((prev) => [
-            ...prev,
-            {
-              agent: data.agent,
-              content_type: chunkType,
-              content: chunkContent,
-              mime_type: data.mime_type,
-              label: data.label,
-            },
-          ]);
-          setEvents((prev) => [...prev, data]);
+        if (data.type === 'content_chunk') {
           return;
         }
 
@@ -439,43 +426,6 @@ export default function Home() {
               </motion.div>
             )}
 
-            {contentChunks.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}
-              >
-                <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Live Interleaved Output</h2>
-                {contentChunks.map((chunk, i) => (
-                  <div key={`${chunk.content_type}-${i}`} style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '14px' }}>
-                    <div style={{ fontSize: '11px', color: '#8A8DAA', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
-                      {chunk.agent} • {chunk.label || chunk.content_type}
-                    </div>
-                    {chunk.content_type === 'text' && (
-                      <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '14px', lineHeight: '1.6' }}>
-                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                          {chunk.content}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-                    {chunk.content_type === 'image' && (
-                      <img
-                        src={`data:${chunk.mime_type || 'image/png'};base64,${chunk.content}`}
-                        alt={chunk.label || 'Generated visual chunk'}
-                        style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}
-                      />
-                    )}
-                    {chunk.content_type === 'audio' && (
-                      <audio controls style={{ width: '100%' }} src={`data:${chunk.mime_type || 'audio/mpeg'};base64,${chunk.content}`} />
-                    )}
-                    {chunk.content_type === 'video' && (
-                      <video controls style={{ width: '100%', borderRadius: '8px' }} src={`data:${chunk.mime_type || 'video/mp4'};base64,${chunk.content}`} />
-                    )}
-                  </div>
-                ))}
-              </motion.div>
-            )}
-
             {finalResult && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -510,16 +460,27 @@ export default function Home() {
                   </div>
                 )}
 
-                {finalResult.gemini_interleaved_narrative && (
+                {finalResult.problem_algorithm_mapping && (
                   <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                      <Activity size={20} color="#64FFDA" />
-                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Gemini Interleaved Narrative</h2>
+                      <Lightbulb size={20} color="#00E5FF" />
+                      <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>
+                        Why This Quantum Algorithm Fits
+                      </h2>
                     </div>
-                    <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '14px', lineHeight: '1.6' }}>
-                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                        {finalResult.gemini_interleaved_narrative}
-                      </ReactMarkdown>
+                    <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '14px', lineHeight: '1.65', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <div>
+                        <strong>Problem class:</strong> {finalResult.problem_algorithm_mapping.problem_class || 'Unknown'}
+                      </div>
+                      <div>
+                        <strong>Chosen algorithm:</strong> {finalResult.problem_algorithm_mapping.identified_algorithm || 'Unknown'}
+                      </div>
+                      <div>
+                        <strong>Why:</strong> {finalResult.problem_algorithm_mapping.why_this_algorithm || 'No justification provided.'}
+                      </div>
+                      <div>
+                        <strong>How user problem maps:</strong> {finalResult.problem_algorithm_mapping.how_user_problem_maps || 'No mapping narrative provided.'}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -553,17 +514,6 @@ export default function Home() {
                       )}
                     </div>
 
-                    {finalResult.gemini_interleaved_images && finalResult.gemini_interleaved_images.length > 0 && (
-                      <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
-                        <div style={{ fontSize: '12px', color: '#64FFDA', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Gemini Native Image</div>
-                        <img
-                          src={`data:image/png;base64,${finalResult.gemini_interleaved_images[0]}`}
-                          alt="Gemini interleaved generated visual"
-                          style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}
-                        />
-                      </div>
-                    )}
-
                     <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ fontSize: '12px', color: '#D500F9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Veo Output</div>
                       {finalResult.generated_video ? (
@@ -574,11 +524,6 @@ export default function Home() {
                         </a>
                       ) : (
                         <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No video generated</div>
-                      )}
-                      {finalResult.video_prompt && (
-                        <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(255,255,255,0.65)', borderLeft: '2px solid #D500F9', paddingLeft: '10px' }}>
-                          Prompt: {finalResult.video_prompt}
-                        </div>
                       )}
                     </div>
                   </div>
@@ -661,6 +606,28 @@ export default function Home() {
                     </div>
                   </div>
 
+                </div>
+
+                <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px' }}>
+                    <Activity size={20} color="#FFD600" />
+                    <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Simulation Results</h2>
+                  </div>
+                  <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '14px', lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div>
+                      <strong>Status:</strong> {finalResult.simulation_results?.status || 'Unknown'}
+                    </div>
+                    {finalResult.simulation_results?.histogram && Object.keys(finalResult.simulation_results.histogram).length > 0 && (
+                      <div>
+                        <strong>Histogram counts:</strong> {Object.entries(finalResult.simulation_results.histogram).map(([state, count]) => `${state}: ${count}`).join(' | ')}
+                      </div>
+                    )}
+                    {Boolean(finalResult.simulation_results?.error) && (
+                      <div>
+                        <strong>Execution warning:</strong> {String(finalResult.simulation_results?.error)}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
               </motion.div>
