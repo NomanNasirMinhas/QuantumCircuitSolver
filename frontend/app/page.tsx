@@ -22,6 +22,23 @@ type SessionSummary = {
   updated_at: string;
 };
 
+type PreviousRunSummary = {
+  run_id: string;
+  session_id: string;
+  prompt: string;
+  status: string;
+  has_final_package: boolean;
+  identified_algorithm?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type PreviousRunDetail = PreviousRunSummary & {
+  run_context?: Record<string, unknown> | null;
+  mapping?: Record<string, unknown> | null;
+  final_package?: FinalResultData | null;
+};
+
 type FinalResultData = {
   metadata?: { algorithm: string; qubits: number };
   problem_algorithm_mapping?: {
@@ -90,6 +107,10 @@ export default function Home() {
   const [finalResult, setFinalResult] = useState<FinalResultData | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [showSessionPanel, setShowSessionPanel] = useState(false);
+  const [previousRuns, setPreviousRuns] = useState<PreviousRunSummary[]>([]);
+  const [isLoadingPreviousRuns, setIsLoadingPreviousRuns] = useState(true);
+  const [previousRunsError, setPreviousRunsError] = useState('');
+  const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -172,9 +193,57 @@ export default function Home() {
     }
   };
 
+  const fetchPreviousRuns = async () => {
+    setIsLoadingPreviousRuns(true);
+    setPreviousRunsError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/runs/history?limit=200`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data: PreviousRunSummary[] = await res.json();
+      setPreviousRuns(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to fetch previous runs:', err);
+      setPreviousRunsError('Unable to load previous runs right now.');
+      setPreviousRuns([]);
+    } finally {
+      setIsLoadingPreviousRuns(false);
+    }
+  };
+
+  const loadPreviousRun = async (runId: string) => {
+    if (!runId || loadingRunId) return;
+    setLoadingRunId(runId);
+    setPreviousRunsError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/runs/history/${encodeURIComponent(runId)}`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const detail: PreviousRunDetail = await res.json();
+      if (!detail.final_package) {
+        setPreviousRunsError('This run does not have a final result package yet.');
+        return;
+      }
+      setEvents([]);
+      setFinalResult(detail.final_package);
+      setPrompt(detail.prompt || '');
+      setIsSimulating(false);
+      setAccessError('');
+      setShowSessionPanel(false);
+    } catch (err) {
+      console.error('Failed to load previous run:', err);
+      setPreviousRunsError('Unable to load this run.');
+    } finally {
+      setLoadingRunId(null);
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       void fetchAccessStatus().finally(() => setIsCheckingAccess(false));
+      void fetchPreviousRuns();
     }, 0);
     return () => clearTimeout(timer);
   }, []);
@@ -286,6 +355,7 @@ export default function Home() {
           void fetchAccessStatus();
           ws.close();
           fetchSessions();
+          void fetchPreviousRuns();
         } else if (data.type === 'fatal') {
           workflowFinishedRef.current = true;
           setEvents((prev) => [...prev, data]);
@@ -296,6 +366,7 @@ export default function Home() {
           void fetchAccessStatus();
           ws.close();
           fetchSessions();
+          void fetchPreviousRuns();
         } else {
           setEvents((prev) => [...prev, data]);
         }
@@ -310,6 +381,7 @@ export default function Home() {
 
     ws.onclose = () => {
       fetchSessions();
+      void fetchPreviousRuns();
       if (workflowFinishedRef.current) {
         setIsSimulating(false);
         return;
@@ -380,6 +452,7 @@ export default function Home() {
     setPrompt('');
     setAccessError('');
     setShowSessionPanel(false);
+    void fetchPreviousRuns();
   };
 
   if (isCheckingAccess) {
@@ -397,66 +470,140 @@ export default function Home() {
     const exhausted = !!accessInfo?.exhausted;
     return (
       <div style={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#060914', padding: '24px' }}>
-        <div style={{ width: '100%', maxWidth: '520px', background: 'rgba(20,24,34,0.95)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '16px', padding: '28px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <BrainCircuit size={20} color="#00E5FF" />
-            <h1 style={{ margin: 0, color: '#fff', fontFamily: 'monospace', fontSize: '20px' }}>Access Code Required</h1>
+        <div style={{ width: '100%', maxWidth: '1080px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px', alignItems: 'start' }}>
+          <div style={{ background: 'rgba(20,24,34,0.95)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '16px', padding: '28px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <BrainCircuit size={20} color="#00E5FF" />
+              <h1 style={{ margin: 0, color: '#fff', fontFamily: 'monospace', fontSize: '20px' }}>Access Code Required</h1>
+            </div>
+
+            <p style={{ marginTop: 0, color: 'rgba(255,255,255,0.75)', fontSize: '14px', lineHeight: '1.6' }}>
+              Enter one-time access code to run a new prompt.
+            </p>
+
+            {typeof accessInfo?.remaining === 'number' && (
+              <p style={{ color: exhausted ? '#FF1744' : '#00E5FF', fontSize: '13px', marginBottom: '14px' }}>
+                Remaining codes: {accessInfo.remaining}
+              </p>
+            )}
+
+            {exhausted ? (
+              <div style={{ padding: '14px', borderRadius: '10px', border: '1px solid rgba(255,23,68,0.4)', background: 'rgba(255,23,68,0.1)', color: '#FF8A80', fontSize: '14px' }}>
+                All access codes are exhausted. Ask admin to reset codes.
+              </div>
+            ) : (
+              <form onSubmit={submitAccessCode} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <input
+                  type="text"
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                  placeholder="QCS-XXXX-XXXX"
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    background: 'rgba(0,0,0,0.35)',
+                    color: '#fff',
+                    fontFamily: 'monospace',
+                    fontSize: '14px',
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={isSubmittingAccessCode || !accessCode.trim()}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    background: isSubmittingAccessCode ? 'rgba(0,229,255,0.35)' : 'linear-gradient(135deg, #00E5FF, #00B8D4)',
+                    color: '#041018',
+                    fontWeight: 700,
+                    cursor: isSubmittingAccessCode ? 'not-allowed' : 'pointer',
+                    fontFamily: 'monospace',
+                  }}
+                >
+                  {isSubmittingAccessCode ? 'Validating...' : 'Unlock Platform'}
+                </button>
+              </form>
+            )}
+
+            {accessError && (
+              <p style={{ marginTop: '12px', marginBottom: 0, color: '#FF8A80', fontSize: '13px' }}>{accessError}</p>
+            )}
           </div>
 
-          <p style={{ marginTop: 0, color: 'rgba(255,255,255,0.75)', fontSize: '14px', lineHeight: '1.6' }}>
-            Enter one-time access code to unlock the Quantum Circuit Orchestrator.
-          </p>
-
-          {typeof accessInfo?.remaining === 'number' && (
-            <p style={{ color: exhausted ? '#FF1744' : '#00E5FF', fontSize: '13px', marginBottom: '14px' }}>
-              Remaining codes: {accessInfo.remaining}
-            </p>
-          )}
-
-          {exhausted ? (
-            <div style={{ padding: '14px', borderRadius: '10px', border: '1px solid rgba(255,23,68,0.4)', background: 'rgba(255,23,68,0.1)', color: '#FF8A80', fontSize: '14px' }}>
-              All access codes are exhausted. Ask admin to reset codes.
-            </div>
-          ) : (
-            <form onSubmit={submitAccessCode} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <input
-                type="text"
-                value={accessCode}
-                onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
-                placeholder="QCS-XXXX-XXXX"
+          <div style={{ background: 'rgba(20,24,34,0.95)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '16px', padding: '22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '12px' }}>
+              <h2 style={{ margin: 0, color: '#fff', fontFamily: 'monospace', fontSize: '17px' }}>Previous Runs</h2>
+              <button
+                type="button"
+                onClick={() => void fetchPreviousRuns()}
                 style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  borderRadius: '10px',
                   border: '1px solid rgba(255,255,255,0.2)',
                   background: 'rgba(0,0,0,0.35)',
-                  color: '#fff',
-                  fontFamily: 'monospace',
-                  fontSize: '14px',
-                }}
-              />
-              <button
-                type="submit"
-                disabled={isSubmittingAccessCode || !accessCode.trim()}
-                style={{
-                  padding: '12px 14px',
-                  borderRadius: '10px',
-                  border: 'none',
-                  background: isSubmittingAccessCode ? 'rgba(0,229,255,0.35)' : 'linear-gradient(135deg, #00E5FF, #00B8D4)',
-                  color: '#041018',
-                  fontWeight: 700,
-                  cursor: isSubmittingAccessCode ? 'not-allowed' : 'pointer',
-                  fontFamily: 'monospace',
+                  color: '#9CEFFF',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
                 }}
               >
-                {isSubmittingAccessCode ? 'Validating...' : 'Unlock Platform'}
+                Refresh
               </button>
-            </form>
-          )}
+            </div>
 
-          {accessError && (
-            <p style={{ marginTop: '12px', marginBottom: 0, color: '#FF8A80', fontSize: '13px' }}>{accessError}</p>
-          )}
+            <p style={{ marginTop: 0, color: 'rgba(255,255,255,0.65)', fontSize: '13px', lineHeight: '1.5' }}>
+              Browse final results from earlier runs without a passcode.
+            </p>
+
+            {isLoadingPreviousRuns ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#9CEFFF', fontSize: '13px' }}>
+                <Loader2 size={14} className="animate-spin" />
+                Loading previous runs...
+              </div>
+            ) : previousRunsError ? (
+              <div style={{ color: '#FF8A80', fontSize: '13px' }}>{previousRunsError}</div>
+            ) : previousRuns.length === 0 ? (
+              <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '13px' }}>No previous runs found.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto', paddingRight: '4px' }} className="custom-scrollbar">
+                {previousRuns.map((run) => {
+                  const disabled = !run.has_final_package || loadingRunId !== null;
+                  const isLoadingThisRun = loadingRunId === run.run_id;
+                  return (
+                    <div key={run.run_id} style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', padding: '12px', background: 'rgba(0,0,0,0.28)' }}>
+                      <div style={{ color: '#fff', fontSize: '13px', marginBottom: '6px', lineHeight: '1.4' }}>
+                        {run.prompt || '(Prompt unavailable)'}
+                      </div>
+                      <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '11px', marginBottom: '8px' }}>
+                        {new Date(run.updated_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {' • '}
+                        {run.status}
+                        {run.identified_algorithm ? ` • ${run.identified_algorithm}` : ''}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void loadPreviousRun(run.run_id)}
+                        disabled={disabled}
+                        style={{
+                          border: '1px solid rgba(0,229,255,0.35)',
+                          background: disabled ? 'rgba(0,229,255,0.1)' : 'rgba(0,229,255,0.2)',
+                          color: '#9CEFFF',
+                          borderRadius: '8px',
+                          padding: '7px 10px',
+                          fontSize: '12px',
+                          cursor: disabled ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {isLoadingThisRun ? 'Loading...' : run.has_final_package ? 'View Final Result' : 'No Final Result Yet'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -500,7 +647,7 @@ export default function Home() {
         {!isAccessGranted && !isSimulating && (
           <div style={{ marginBottom: '20px', padding: '14px 16px', borderRadius: '12px', border: '1px solid rgba(255,193,7,0.35)', background: 'rgba(255,193,7,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
             <div style={{ color: '#FFE082', fontSize: '13px' }}>
-              Access for the previous code has been consumed (one code = one prompt). Enter a new code to run another prompt.
+              Enter a one-time access code to run a new prompt. Previous runs can be viewed without a code.
             </div>
             <button
               onClick={openAccessGateForNextPrompt}

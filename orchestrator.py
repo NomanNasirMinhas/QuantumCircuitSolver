@@ -8,8 +8,9 @@ import tempfile
 import secrets
 import string
 import threading
+import re
 from datetime import datetime, timezone
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,6 +55,7 @@ INITIAL_ACCESS_CODES = [
     "QCS-DELTA-6N5V",
     "QCS-OMEGA-1H9Q",
 ]
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def _parse_allowed_origins() -> List[str]:
@@ -241,6 +243,90 @@ def _save_json(path: str, payload: Any) -> None:
 def _save_text(path: str, content: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(content or "")
+
+
+def _read_json_if_exists(path: str) -> Optional[Dict[str, Any]]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            return loaded
+    except Exception:
+        return None
+    return None
+
+
+def _read_text_if_exists(path: str) -> str:
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _debug_runs_root() -> str:
+    root = os.path.abspath(DEBUG_RUNS_DIR)
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def _resolve_run_dir(run_id: str) -> Optional[str]:
+    candidate_id = (run_id or "").strip()
+    if not RUN_ID_PATTERN.match(candidate_id):
+        return None
+
+    root = _debug_runs_root()
+    run_dir = os.path.abspath(os.path.join(root, candidate_id))
+    if os.path.commonpath([root, run_dir]) != root:
+        return None
+    if not os.path.isdir(run_dir):
+        return None
+    return run_dir
+
+
+def _iso_utc_from_epoch(epoch_seconds: float) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).isoformat()
+
+
+def _build_run_summary(run_id: str, run_dir: str) -> Dict[str, Any]:
+    run_context = _read_json_if_exists(os.path.join(run_dir, "run_context.json")) or {}
+    mapping_summary = _read_json_if_exists(os.path.join(run_dir, "problem_algorithm_mapping.json")) or {}
+    prompt = _read_text_if_exists(os.path.join(run_dir, "input_prompt.txt"))
+    final_package_path = os.path.join(run_dir, "final_package.json")
+    has_final_package = os.path.exists(final_package_path)
+    status = "COMPLETED" if has_final_package else str(run_context.get("resume_stage", "IN_PROGRESS"))
+    identified_algorithm = mapping_summary.get("identified_algorithm", "")
+    return {
+        "run_id": run_id,
+        "session_id": str(run_context.get("session_id", run_id)),
+        "prompt": prompt,
+        "status": status,
+        "has_final_package": has_final_package,
+        "identified_algorithm": identified_algorithm,
+        "created_at": _iso_utc_from_epoch(os.path.getctime(run_dir)),
+        "updated_at": _iso_utc_from_epoch(os.path.getmtime(run_dir)),
+    }
+
+
+def _list_run_history(limit: int) -> List[Dict[str, Any]]:
+    root = _debug_runs_root()
+    try:
+        entries = [entry for entry in os.scandir(root) if entry.is_dir()]
+    except FileNotFoundError:
+        return []
+
+    entries.sort(key=lambda entry: entry.stat().st_mtime, reverse=True)
+    summaries: List[Dict[str, Any]] = []
+    for entry in entries[:limit]:
+        try:
+            summaries.append(_build_run_summary(entry.name, entry.path))
+        except Exception:
+            continue
+    return summaries
 
 
 def _ext_from_mime(mime_type: str) -> str:
@@ -867,6 +953,31 @@ def delete_session(session_id: str):
     if deleted:
         return {"status": "deleted"}
     return {"status": "not_found"}
+
+
+@app.get("/runs/history")
+def list_previous_runs(limit: int = 100):
+    bounded_limit = min(max(limit, 1), 500)
+    return _list_run_history(limit=bounded_limit)
+
+
+@app.get("/runs/history/{run_id}")
+def get_previous_run(run_id: str):
+    run_dir = _resolve_run_dir(run_id)
+    if not run_dir:
+        raise HTTPException(status_code=404, detail="Run not found.")
+
+    summary = _build_run_summary(run_id, run_dir)
+    final_package = _read_json_if_exists(os.path.join(run_dir, "final_package.json"))
+    return {
+        **summary,
+        "run_context": _read_json_if_exists(os.path.join(run_dir, "run_context.json")),
+        "mapping": (
+            _read_json_if_exists(os.path.join(run_dir, "problem_algorithm_mapping.json"))
+            or _read_json_if_exists(os.path.join(run_dir, "mapping.json"))
+        ),
+        "final_package": final_package,
+    }
 
 
 @app.get("/access/status")
