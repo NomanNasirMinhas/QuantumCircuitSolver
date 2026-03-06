@@ -9,6 +9,8 @@ import secrets
 import string
 import threading
 import re
+import sys
+import importlib.util
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
@@ -56,6 +58,29 @@ INITIAL_ACCESS_CODES = [
     "QCS-OMEGA-1H9Q",
 ]
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SAFE_PIP_PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+RUNTIME_PIP_INSTALL_TIMEOUT_SEC = int(os.getenv("RUNTIME_PIP_INSTALL_TIMEOUT_SEC", "300"))
+AUTO_INSTALL_UNMAPPED_IMPORTS = os.getenv("AUTO_INSTALL_UNMAPPED_IMPORTS", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+RUNTIME_IMPORT_TO_PACKAGE = {
+    "numpy": "numpy",
+    "scipy": "scipy",
+    "matplotlib": "matplotlib",
+    "pandas": "pandas",
+    "seaborn": "seaborn",
+    "networkx": "networkx",
+    "pylatexenc": "pylatexenc",
+    "sympy": "sympy",
+    "rustworkx": "rustworkx",
+    "qiskit": "qiskit",
+    "qiskit_aer": "qiskit-aer",
+}
+STDLIB_MODULE_NAMES = set(getattr(sys, "stdlib_module_names", set()))
+PIP_INSTALL_LOCK = threading.Lock()
 
 
 def _parse_allowed_origins() -> List[str]:
@@ -372,14 +397,137 @@ def _extract_histogram_from_stdout(output: str) -> Dict[str, Any]:
     return {}
 
 
+def _extract_import_roots(python_code: str) -> List[str]:
+    roots = set()
+    try:
+        parsed = ast.parse(python_code or "")
+    except Exception:
+        return []
+
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0].strip()
+                if root:
+                    roots.add(root)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            root = node.module.split(".")[0].strip()
+            if root:
+                roots.add(root)
+    return sorted(roots)
+
+
+def _module_is_available(module_root: str) -> bool:
+    if not module_root:
+        return True
+    if module_root in STDLIB_MODULE_NAMES:
+        return True
+    try:
+        return importlib.util.find_spec(module_root) is not None
+    except Exception:
+        return False
+
+
+def _map_import_to_package(module_root: str) -> Optional[str]:
+    mapped = RUNTIME_IMPORT_TO_PACKAGE.get(module_root)
+    if mapped:
+        return mapped
+    if not AUTO_INSTALL_UNMAPPED_IMPORTS:
+        return None
+    if SAFE_PIP_PACKAGE_PATTERN.match(module_root):
+        return module_root
+    return None
+
+
+def _pip_install(packages: List[str]) -> Dict[str, Any]:
+    if not packages:
+        return {"ok": True, "stdout": "", "stderr": ""}
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", *packages],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=RUNTIME_PIP_INSTALL_TIMEOUT_SEC,
+        )
+        return {
+            "ok": result.returncode == 0,
+            "stdout": (result.stdout or "").strip(),
+            "stderr": (result.stderr or "").strip(),
+        }
+    except Exception as exc:
+        return {"ok": False, "stdout": "", "stderr": str(exc)}
+
+
+def _ensure_generated_code_dependencies(python_code: str) -> Dict[str, Any]:
+    imports = _extract_import_roots(python_code)
+    missing_imports = [module for module in imports if not _module_is_available(module)]
+    if not missing_imports:
+        return {
+            "imports": imports,
+            "missing_imports": [],
+            "install_attempted": [],
+            "installed": [],
+            "failed": [],
+            "skipped_unmapped": [],
+            "unresolved_imports": [],
+        }
+
+    install_candidates = []
+    skipped_unmapped = []
+    for module in missing_imports:
+        package = _map_import_to_package(module)
+        if not package:
+            skipped_unmapped.append(module)
+            continue
+        if package not in install_candidates:
+            install_candidates.append(package)
+
+    installed = []
+    failed = []
+    last_error = ""
+
+    if install_candidates:
+        with PIP_INSTALL_LOCK:
+            bulk = _pip_install(install_candidates)
+            if bulk["ok"]:
+                installed.extend(install_candidates)
+            else:
+                last_error = bulk.get("stderr", "") or bulk.get("stdout", "")
+                # Retry one by one so at least a subset can succeed.
+                for package in install_candidates:
+                    one = _pip_install([package])
+                    if one["ok"]:
+                        installed.append(package)
+                    else:
+                        failed.append(package)
+                        if one.get("stderr") or one.get("stdout"):
+                            last_error = one.get("stderr", "") or one.get("stdout", "")
+
+    unresolved_imports = [module for module in missing_imports if not _module_is_available(module)]
+    failed = sorted(set(failed))
+
+    return {
+        "imports": imports,
+        "missing_imports": missing_imports,
+        "install_attempted": install_candidates,
+        "installed": sorted(set(installed)),
+        "failed": failed,
+        "skipped_unmapped": sorted(set(skipped_unmapped)),
+        "unresolved_imports": sorted(set(unresolved_imports)),
+        "last_error": (last_error or "")[:1200],
+    }
+
+
 def _simulate_python_code(python_code: str, timeout_sec: int = 60) -> Dict[str, Any]:
     actual_results: Dict[str, Any] = {"status": "FAILED", "histogram": {}}
+    dependency_report = _ensure_generated_code_dependencies(python_code)
+    actual_results["dependency_report"] = dependency_report
     with tempfile.TemporaryDirectory(prefix="qcs_eval_") as workdir:
         script_path = os.path.join(workdir, "temp_circuit.py")
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(python_code)
-
-        import sys
 
         result = subprocess.run(
             [sys.executable, script_path],
@@ -401,6 +549,12 @@ def _simulate_python_code(python_code: str, timeout_sec: int = 60) -> Dict[str, 
         else:
             stderr = (result.stderr or "").strip().split("\n")
             actual_results["error"] = stderr[-3:]
+            if dependency_report.get("failed") or dependency_report.get("unresolved_imports"):
+                actual_results["dependency_error"] = {
+                    "failed_packages": dependency_report.get("failed", []),
+                    "unresolved_imports": dependency_report.get("unresolved_imports", []),
+                    "last_error": dependency_report.get("last_error", ""),
+                }
 
     return actual_results
 
@@ -431,12 +585,11 @@ def _generate_histogram_diagram_b64(histogram: Dict[str, Any]) -> str:
 
 
 def _render_circuit_diagram_b64(python_code: str, timeout_sec: int = 60) -> str:
+    _ensure_generated_code_dependencies(python_code)
     with tempfile.TemporaryDirectory(prefix="qcs_draw_") as workdir:
         script_path = os.path.join(workdir, "temp_circuit_draw.py")
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(python_code)
-
-        import sys
 
         subprocess.run(
             [sys.executable, script_path],
@@ -658,6 +811,31 @@ class QuantumOrchestrator:
 
                 try:
                     actual_results = await asyncio.to_thread(_simulate_python_code, python_code)
+                    dependency_report = actual_results.get("dependency_report", {})
+                    if dependency_report.get("install_attempted"):
+                        await event_callback(
+                            {
+                                "type": "progress",
+                                "agent": "Environment",
+                                "status": (
+                                    "Runtime dependency check: installed "
+                                    f"{len(dependency_report.get('installed', []))}/"
+                                    f"{len(dependency_report.get('install_attempted', []))} packages."
+                                ),
+                            }
+                        )
+                    if dependency_report.get("failed") or dependency_report.get("unresolved_imports"):
+                        await event_callback(
+                            {
+                                "type": "warning",
+                                "agent": "Environment",
+                                "status": (
+                                    "Some generated-code dependencies could not be auto-installed. "
+                                    f"failed={dependency_report.get('failed', [])}, "
+                                    f"unresolved_imports={dependency_report.get('unresolved_imports', [])}"
+                                ),
+                            }
+                        )
                     if actual_results.get("error"):
                         await event_callback({"type": "warning", "agent": "Environment", "status": f"Sim execution failed: {actual_results['error']}"})
                 except Exception as e:

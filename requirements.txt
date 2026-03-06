@@ -7,3 +7,5 @@ matplotlib==3.10.8
 qiskit==2.3.0
 qiskit-aer==0.17.2
 python-dotenv==1.2.2
+networkx==3.4.2
+pylatexenc==2.10
