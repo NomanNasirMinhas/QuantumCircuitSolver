@@ -51,6 +51,15 @@ gcloud builds submit \
   --project "${PROJECT_ID}" \
   .
 
+echo "==> Ensuring backend is publicly invokable"
+gcloud run services add-iam-policy-binding "${BACKEND_SERVICE}" \
+  --platform managed \
+  --region "${REGION}" \
+  --project "${PROJECT_ID}" \
+  --member="allUsers" \
+  --role="roles/run.invoker" \
+  --quiet
+
 BACKEND_URL="$(gcloud run services describe "${BACKEND_SERVICE}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"
 if [[ -z "${BACKEND_URL}" ]]; then
   echo "Failed to resolve backend URL after deploy."
@@ -69,6 +78,15 @@ gcloud builds submit \
   --substitutions="_REGION=${REGION},_SERVICE_NAME=${FRONTEND_SERVICE},_IMAGE=${FRONTEND_IMAGE},_API_BASE_URL=${BACKEND_URL},_WS_URL=${WS_URL}" \
   --project "${PROJECT_ID}" \
   frontend
+
+echo "==> Ensuring frontend is publicly invokable"
+gcloud run services add-iam-policy-binding "${FRONTEND_SERVICE}" \
+  --platform managed \
+  --region "${REGION}" \
+  --project "${PROJECT_ID}" \
+  --member="allUsers" \
+  --role="roles/run.invoker" \
+  --quiet
 
 FRONTEND_URL="$(gcloud run services describe "${FRONTEND_SERVICE}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"
 

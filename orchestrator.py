@@ -297,7 +297,7 @@ def _build_run_summary(run_id: str, run_dir: str) -> Dict[str, Any]:
     mapping_summary = _read_json_if_exists(os.path.join(run_dir, "problem_algorithm_mapping.json")) or {}
     prompt = _read_text_if_exists(os.path.join(run_dir, "input_prompt.txt"))
     final_package_path = os.path.join(run_dir, "final_package.json")
-    has_final_package = os.path.exists(final_package_path)
+    has_final_package = _read_json_if_exists(final_package_path) is not None
     status = "COMPLETED" if has_final_package else str(run_context.get("resume_stage", "IN_PROGRESS"))
     identified_algorithm = mapping_summary.get("identified_algorithm", "")
     return {
@@ -323,7 +323,10 @@ def _list_run_history(limit: int) -> List[Dict[str, Any]]:
     summaries: List[Dict[str, Any]] = []
     for entry in entries[:limit]:
         try:
-            summaries.append(_build_run_summary(entry.name, entry.path))
+            summary = _build_run_summary(entry.name, entry.path)
+            if not summary.get("has_final_package"):
+                continue
+            summaries.append(summary)
         except Exception:
             continue
     return summaries
@@ -968,7 +971,11 @@ def get_previous_run(run_id: str):
         raise HTTPException(status_code=404, detail="Run not found.")
 
     summary = _build_run_summary(run_id, run_dir)
+    if not summary.get("has_final_package"):
+        raise HTTPException(status_code=404, detail="Run is not completed successfully.")
     final_package = _read_json_if_exists(os.path.join(run_dir, "final_package.json"))
+    if not final_package:
+        raise HTTPException(status_code=404, detail="Run is not completed successfully.")
     return {
         **summary,
         "run_context": _read_json_if_exists(os.path.join(run_dir, "run_context.json")),

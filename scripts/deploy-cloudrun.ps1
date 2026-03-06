@@ -63,6 +63,18 @@ if ($LASTEXITCODE -ne 0) {
   throw "Backend Cloud Build failed. Fix the build error and rerun deploy."
 }
 
+Write-Host "==> Ensuring backend is publicly invokable"
+& gcloud run services add-iam-policy-binding $BackendService `
+  --region $Region `
+  --project $ProjectId `
+  --member "allUsers" `
+  --role "roles/run.invoker" `
+  --platform managed `
+  --quiet
+if ($LASTEXITCODE -ne 0) {
+  throw "Failed to grant unauthenticated invoker on backend service '$BackendService'."
+}
+
 $backendUrl = (& gcloud run services describe $BackendService --region $Region --project $ProjectId --format "value(status.url)").Trim()
 if ($LASTEXITCODE -ne 0) {
   throw "Backend service '$BackendService' not found after deploy."
@@ -84,6 +96,18 @@ $frontendSubs = "_REGION=$Region,_SERVICE_NAME=$FrontendService,_IMAGE=$frontend
   --project $ProjectId
 if ($LASTEXITCODE -ne 0) {
   throw "Frontend Cloud Build failed. Fix the build error and rerun deploy."
+}
+
+Write-Host "==> Ensuring frontend is publicly invokable"
+& gcloud run services add-iam-policy-binding $FrontendService `
+  --region $Region `
+  --project $ProjectId `
+  --member "allUsers" `
+  --role "roles/run.invoker" `
+  --platform managed `
+  --quiet
+if ($LASTEXITCODE -ne 0) {
+  throw "Failed to grant unauthenticated invoker on frontend service '$FrontendService'."
 }
 
 $frontendUrl = (& gcloud run services describe $FrontendService --region $Region --project $ProjectId --format "value(status.url)").Trim()
