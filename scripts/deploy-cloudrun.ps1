@@ -13,6 +13,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+  $PSNativeCommandUseErrorActionPreference = $true
+}
 
 if (-not $ProjectId) {
   $ProjectId = (gcloud config get-value project).Trim()
@@ -38,28 +41,32 @@ gcloud services enable `
   --project $ProjectId
 
 Write-Host "==> Ensuring Artifact Registry repo exists: $ArRepo"
-$repoExists = $true
-try {
-  gcloud artifacts repositories describe $ArRepo --location $Region --project $ProjectId *> $null
-} catch {
-  $repoExists = $false
-}
-if (-not $repoExists) {
-  gcloud artifacts repositories create $ArRepo `
+$null = & gcloud artifacts repositories describe $ArRepo --location $Region --project $ProjectId --format "value(name)" 2>$null
+if ($LASTEXITCODE -ne 0) {
+  & gcloud artifacts repositories create $ArRepo `
     --repository-format=docker `
     --location $Region `
     --project $ProjectId
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to create Artifact Registry repo '$ArRepo' in region '$Region'."
+  }
 }
 
 Write-Host "==> Deploying backend service: $BackendService"
 $backendSubs = "_REGION=$Region,_SERVICE_NAME=$BackendService,_IMAGE=$backendImage,_CORS_ORIGINS=$CorsAllowOrigins,_GCP_LOCATION=$GcpLocation,_ACCESS_CODE_MASTER_PASSWORD=$AccessCodeMasterPassword,_ACCESS_CODE_RESET_ENDPOINT=$AccessCodeResetEndpoint,_ACCESS_CODE_LIST_ENDPOINT=$AccessCodeListEndpoint,_ACCESS_CODE_STATE_FILE=$AccessCodeStateFile"
-gcloud builds submit `
+& gcloud builds submit `
   --config cloudbuild.yaml `
   --substitutions $backendSubs `
   --project $ProjectId `
   .
+if ($LASTEXITCODE -ne 0) {
+  throw "Backend Cloud Build failed. Fix the build error and rerun deploy."
+}
 
-$backendUrl = (gcloud run services describe $BackendService --region $Region --project $ProjectId --format "value(status.url)").Trim()
+$backendUrl = (& gcloud run services describe $BackendService --region $Region --project $ProjectId --format "value(status.url)").Trim()
+if ($LASTEXITCODE -ne 0) {
+  throw "Backend service '$BackendService' not found after deploy."
+}
 if (-not $backendUrl) {
   throw "Failed to resolve backend URL after deploy."
 }
@@ -71,12 +78,18 @@ Write-Host "==> Frontend will use API=$backendUrl and WS=$wsUrl"
 
 Write-Host "==> Deploying frontend service: $FrontendService"
 $frontendSubs = "_REGION=$Region,_SERVICE_NAME=$FrontendService,_IMAGE=$frontendImage,_API_BASE_URL=$backendUrl,_WS_URL=$wsUrl"
-gcloud builds submit frontend `
+& gcloud builds submit frontend `
   --config frontend/cloudbuild.yaml `
   --substitutions $frontendSubs `
   --project $ProjectId
+if ($LASTEXITCODE -ne 0) {
+  throw "Frontend Cloud Build failed. Fix the build error and rerun deploy."
+}
 
-$frontendUrl = (gcloud run services describe $FrontendService --region $Region --project $ProjectId --format "value(status.url)").Trim()
+$frontendUrl = (& gcloud run services describe $FrontendService --region $Region --project $ProjectId --format "value(status.url)").Trim()
+if ($LASTEXITCODE -ne 0) {
+  throw "Frontend service '$FrontendService' not found after deploy."
+}
 
 Write-Host ""
 Write-Host "Deployment complete."

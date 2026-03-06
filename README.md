@@ -138,3 +138,11 @@ Deploy to Cloud Run from Google Console/Cloud Shell:
 ```bash
 adk deploy cloud_run --project YOUR_PROJECT --region YOUR_REGION adk_agents/quantum_orchestrator
 ```
+
+```bash
+gcloud artifacts repositories create quantum-circuit-solver --repository-format=docker --location=us-central1 --project=quantumcricuitsolver
+```
+
+```bash
+gcloud artifacts repositories list --location=us-central1 --project=quantumcricuitsolver
+```
