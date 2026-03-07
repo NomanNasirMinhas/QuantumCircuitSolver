@@ -1,10 +1,10 @@
-# Quantum Circuit Orchestrator
-A Multi-Agent Framework for Generative Quantum Software Engineering
+# AgentiQ
+A Multi-Agent Quantum Engineering Platform With Storyline Delivery
 
 ## Project Overview
-The **Quantum Circuit Orchestrator** is an advanced, end-to-end AI pipeline that translates complex, real-world human problems into verified quantum computational circuits. By utilizing a swarm of specialized Google Generative AI agents working sequentially, the system takes a natural language prompt, designs an optimized quantum algorithm, rigorously audits its physical feasibility, simulates the execution locally, and packages the findings into a rich, multimodal presentation layer.
+**AgentiQ** is an end-to-end AI pipeline that translates real-world problems into verified quantum circuits, simulates them, and presents the result as a guided storyline book. A swarm of specialized Google Generative AI agents collaborates sequentially to map the problem, generate Qiskit code, validate scientific correctness, execute simulation, and produce page-based explanatory media with per-page narration.
 
-## Architecture & Agent Roles
+## Architecture And Agent Roles
 The backend drives a cyclic, self-correcting workflow utilizing 5 distinct AI personas:
 
 1. **Translator Agent (Logic Mapper)**
@@ -23,15 +23,25 @@ The backend drives a cyclic, self-correcting workflow utilizing 5 distinct AI pe
    - **Role:** Executes the generated Qiskit circuit payload on a local machine (using `AerSimulator`).
    - **Output:** Analyzes the simulator's standard output (histograms/shot counts) to ensure the circuit compiles, runs without syntax errors, and solves the core logic. Generates a Pass/Fail verdict.
 
-5. **Media Producer Agent (Visual Storyteller)**
-   - **Role:** Converts the technical quantum solution into a cohesive page-by-page storyline.
-   - **Output:** Generates a combined storybook where each page includes synchronized text, illustration, and dedicated narration audio.
+5. **Media Producer Agent (Storyline Creator)**
+   - **Role:** Converts the technical quantum result into a coherent page-by-page learning experience.
+   - **Output:** Produces a combined storybook where each page includes page text, a generated illustration, and dedicated narration audio.
+
+## Storyline Flow
+1. User submits a problem prompt.
+2. Agents derive and validate an executable quantum circuit.
+3. Media producer generates a multi-page storyline plan tied to the exact algorithm and code.
+4. Each page is rendered with:
+   - Page text
+   - Page illustration (Imagen)
+   - Page narration audio (Gemini TTS)
+5. Frontend presents the result in a page-turn reader with per-page "Listen" audio controls.
 
 ## Presentation Layer (Frontend)
 The user interacts with the system via a visually stunning **Next.js & React Three Fiber** environment:
 - **3D Quantum Particle Field:** A dynamic, immersive background that reacts to the simulation state.
 - **Real-Time Execution Graph:** A live, re-arrangeable `React Flow` node graph that maps every websocket event, visually plotting the back-and-forth interactions and attempts among the agents.
-- **Multimodal Delivery:** Once the pipeline completes, the UI renders the final generated code, the plotted Qiskit `circuit_diagram`, a matplotlib-parsed `result_diagram` (Histogram), and a page-based storyline reader with per-page audio.
+- **Storybook Delivery:** Once the pipeline completes, the UI renders the generated code, Qiskit `circuit_diagram`, simulation `result_diagram` (histogram), and the page-based storyline reader with per-page audio.
 
 ## ADK Migration Status
 The backend agents are now implemented on **Google Agent Development Kit (ADK)**:
@@ -56,13 +66,16 @@ python orchestrator.py
 - `IMAGEN_MODEL`: optional Imagen model override for per-page illustrations.
 - `GEMINI_TTS_MODEL`: optional Gemini TTS model override for per-page narration.
 
-## Deploy Custom Orchestrator To Google Cloud Run (Recommended)
-This deploys your current `orchestrator.py` + custom agents backend and the Next.js frontend.
+## Deploy AgentiQ To Google Cloud Run (Recommended)
+This deploys your current `orchestrator.py` backend and the Next.js frontend.
 
 ### One-command deploy (Cloud Shell)
 ```bash
 export PROJECT_ID="your-gcp-project-id"
 export REGION="us-central1"
+export AR_REPO="agentiq"
+export BACKEND_SERVICE="agentiq-orchestrator"
+export FRONTEND_SERVICE="agentiq-frontend"
 export CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
 export ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
 export ACCESS_CODE_BOOTSTRAP_COUNT="5"
@@ -75,6 +88,9 @@ bash scripts/deploy-cloudrun.sh
 ```powershell
 $env:PROJECT_ID="your-gcp-project-id"
 $env:REGION="us-central1"
+$env:AR_REPO="agentiq"
+$env:BACKEND_SERVICE="agentiq-orchestrator"
+$env:FRONTEND_SERVICE="agentiq-frontend"
 $env:CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
 $env:ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
 $env:ACCESS_CODE_BOOTSTRAP_COUNT="5"
@@ -127,19 +143,19 @@ curl "https://YOUR_BACKEND_URL/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/a
 Backend:
 ```bash
 gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_REGION=us-central1,_SERVICE_NAME=quantum-circuit-orchestrator,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/backend:latest,_CORS_ORIGINS=https://your-frontend-domain.example
+  --substitutions=_REGION=us-central1,_SERVICE_NAME=agentiq-orchestrator,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/agentiq/backend:latest,_CORS_ORIGINS=https://your-frontend-domain.example
 ```
 
 Frontend:
 ```bash
 gcloud builds submit frontend --config frontend/cloudbuild.yaml \
-  --substitutions=_REGION=us-central1,_SERVICE_NAME=quantum-circuit-frontend,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/frontend:latest,_API_BASE_URL=https://your-backend-url,_WS_URL=wss://your-backend-url/ws/simulate
+  --substitutions=_REGION=us-central1,_SERVICE_NAME=agentiq-frontend,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/agentiq/frontend:latest,_API_BASE_URL=https://your-backend-url,_WS_URL=wss://your-backend-url/ws/simulate
 ```
 
 ## ADK App For Google Cloud
 An ADK-native deployable app is included at:
 
-- `adk_agents/quantum_orchestrator/agent.py`
+- `adk_agents/quantum_orchestrator/agent.py` (path retained for compatibility)
 
 Run ADK API server locally:
 ```bash
@@ -152,9 +168,9 @@ adk deploy cloud_run --project YOUR_PROJECT --region YOUR_REGION adk_agents/quan
 ```
 
 ```bash
-gcloud artifacts repositories create quantum-circuit-solver --repository-format=docker --location=us-central1 --project=quantumcricuitsolver
+gcloud artifacts repositories create agentiq --repository-format=docker --location=us-central1 --project=YOUR_PROJECT
 ```
 
 ```bash
-gcloud artifacts repositories list --location=us-central1 --project=quantumcricuitsolver
+gcloud artifacts repositories list --location=us-central1 --project=YOUR_PROJECT
 ```

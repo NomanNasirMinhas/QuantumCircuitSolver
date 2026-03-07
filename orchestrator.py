@@ -1384,7 +1384,7 @@ async def _release_workflow_slot(client_ip: str) -> None:
 
 @app.get("/")
 def read_root():
-    return {"message": "Quantum Orchestrator API is Live"}
+    return {"message": "AgentiQ API is Live"}
 
 
 @app.get("/sessions")

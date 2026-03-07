@@ -825,10 +825,10 @@ export default function Home() {
             </div>
 
             <h1 style={{ fontSize: '48px', fontWeight: 800, letterSpacing: '-1px', background: 'linear-gradient(to right, #00E5FF, #D500F9)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '16px' }}>
-              Quantum Circuit Orchestrator
+              AgentiQ
             </h1>
             <p style={{ color: '#8A8DAA', fontSize: '18px', maxWidth: '600px', margin: '0 auto', lineHeight: '1.6' }}>
-              Describe a complex algorithmic problem. Our swarm of specialized quantum agents will design, validate, and simulate the exact circuit required to solve it.
+              Describe a complex algorithmic problem. AgentiQ specialized quantum agents design and validate the circuit, then turn the solution into a guided page-by-page storyline with synchronized visuals and narration.
             </p>
           </motion.div>
         </header>

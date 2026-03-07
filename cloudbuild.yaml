@@ -63,8 +63,8 @@ steps:
 
 substitutions:
   _REGION: us-central1
-  _SERVICE_NAME: quantum-circuit-orchestrator
-  _IMAGE: us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/backend:latest
+  _SERVICE_NAME: agentiq-orchestrator
+  _IMAGE: us-central1-docker.pkg.dev/$PROJECT_ID/agentiq/backend:latest
   _CORS_ORIGINS: https://your-frontend-domain.example
   _GCP_LOCATION: global
   _MAX_PROMPT_LENGTH: "2000"

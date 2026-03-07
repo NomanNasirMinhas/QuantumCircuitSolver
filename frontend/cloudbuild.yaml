@@ -39,8 +39,8 @@ steps:
 
 substitutions:
   _REGION: us-central1
-  _SERVICE_NAME: quantum-circuit-frontend
-  _IMAGE: us-central1-docker.pkg.dev/$PROJECT_ID/quantum-circuit-solver/frontend:latest
+  _SERVICE_NAME: agentiq-frontend
+  _IMAGE: us-central1-docker.pkg.dev/$PROJECT_ID/agentiq/frontend:latest
   _API_BASE_URL: https://your-backend-cloud-run-url
   _WS_URL: wss://your-backend-cloud-run-url/ws/simulate
   _MAX_INSTANCES: "2"

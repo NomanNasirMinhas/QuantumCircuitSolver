@@ -1,9 +1,9 @@
 param(
   [string]$ProjectId = $env:PROJECT_ID,
   [string]$Region = $(if ($env:REGION) { $env:REGION } else { "us-central1" }),
-  [string]$ArRepo = $(if ($env:AR_REPO) { $env:AR_REPO } else { "quantum-circuit-solver" }),
-  [string]$BackendService = $(if ($env:BACKEND_SERVICE) { $env:BACKEND_SERVICE } else { "quantum-circuit-orchestrator" }),
-  [string]$FrontendService = $(if ($env:FRONTEND_SERVICE) { $env:FRONTEND_SERVICE } else { "quantum-circuit-frontend" }),
+  [string]$ArRepo = $(if ($env:AR_REPO) { $env:AR_REPO } else { "agentiq" }),
+  [string]$BackendService = $(if ($env:BACKEND_SERVICE) { $env:BACKEND_SERVICE } else { "agentiq-orchestrator" }),
+  [string]$FrontendService = $(if ($env:FRONTEND_SERVICE) { $env:FRONTEND_SERVICE } else { "agentiq-frontend" }),
   [string]$CorsAllowOrigins = $(if ($env:CORS_ALLOW_ORIGINS) { $env:CORS_ALLOW_ORIGINS } else { "https://your-frontend-domain.example" }),
   [string]$GcpLocation = $(if ($env:GCP_LOCATION) { $env:GCP_LOCATION } else { "global" }),
   [string]$AccessCodeMasterPassword = $(if ($env:ACCESS_CODE_MASTER_PASSWORD) { $env:ACCESS_CODE_MASTER_PASSWORD } else { "change-this-master-password" }),
