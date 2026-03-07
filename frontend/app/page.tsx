@@ -240,6 +240,37 @@ export default function Home() {
     }
   };
 
+  const recoverCompletedRunFromHistory = async (runId: string | null | undefined) => {
+    if (!runId) return false;
+    try {
+      const res = await fetch(`${API_BASE_URL}/runs/history/${encodeURIComponent(runId)}`);
+      if (!res.ok) return false;
+      const detail: PreviousRunDetail = await res.json();
+      if (!detail.final_package) return false;
+
+      workflowFinishedRef.current = true;
+      setFinalResult(detail.final_package);
+      setIsSimulating(false);
+      setIsAccessGranted(false);
+      setAccessToken('');
+      currentAccessTokenRef.current = '';
+      setEvents((prev) => [
+        ...prev,
+        {
+          type: 'success',
+          agent: 'Orchestrator',
+          status: 'Recovered final result from completed run history.',
+        },
+      ]);
+      void fetchAccessStatus();
+      void fetchPreviousRuns();
+      return true;
+    } catch (err) {
+      console.error('Failed to recover completed run from history:', err);
+      return false;
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       void fetchAccessStatus().finally(() => setIsCheckingAccess(false));
@@ -357,6 +388,24 @@ export default function Home() {
           fetchSessions();
           void fetchPreviousRuns();
         } else if (data.type === 'fatal') {
+          if (data.agent === 'AccessControl' && currentSessionIdRef.current) {
+            void recoverCompletedRunFromHistory(currentSessionIdRef.current).then((recovered) => {
+              if (!recovered) {
+                workflowFinishedRef.current = true;
+                setEvents((prev) => [...prev, data]);
+                setIsSimulating(false);
+                setIsAccessGranted(false);
+                setAccessToken('');
+                currentAccessTokenRef.current = '';
+                void fetchAccessStatus();
+                fetchSessions();
+                void fetchPreviousRuns();
+              }
+            });
+            ws.close();
+            return;
+          }
+
           workflowFinishedRef.current = true;
           setEvents((prev) => [...prev, data]);
           setIsSimulating(false);

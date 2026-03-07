@@ -357,6 +357,16 @@ def _list_run_history(limit: int) -> List[Dict[str, Any]]:
     return summaries
 
 
+def _load_completed_run_package(run_id: str) -> Optional[Dict[str, Any]]:
+    run_dir = _resolve_run_dir(run_id)
+    if not run_dir:
+        return None
+    summary = _build_run_summary(run_id, run_dir)
+    if not summary.get("has_final_package"):
+        return None
+    return _read_json_if_exists(os.path.join(run_dir, "final_package.json"))
+
+
 def _ext_from_mime(mime_type: str) -> str:
     mime = (mime_type or "").lower().strip()
     if "png" in mime:
@@ -1243,6 +1253,20 @@ async def websocket_simulate(websocket: WebSocket):
                 is_resume_request = session_manager.load_session(session_id) is not None
             except Exception:
                 is_resume_request = False
+
+        if session_id and not is_resume_request:
+            completed_package = _load_completed_run_package(session_id)
+            if completed_package:
+                await websocket.send_json(
+                    {
+                        "type": "complete",
+                        "agent": "Orchestrator",
+                        "status": "Recovered completed run result.",
+                        "session_id": session_id,
+                        "data": completed_package,
+                    }
+                )
+                return
 
         if not is_resume_request:
             token_check = access_code_manager.consume_prompt_access(access_token or "")
