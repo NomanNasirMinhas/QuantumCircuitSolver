@@ -44,8 +44,16 @@ gcloud services enable `
   --project $ProjectId
 
 Write-Host "==> Ensuring Artifact Registry repo exists: $ArRepo"
-$null = & gcloud artifacts repositories describe $ArRepo --location $Region --project $ProjectId --format "value(name)" 2>$null
-if ($LASTEXITCODE -ne 0) {
+$repoExists = $false
+try {
+  $null = & gcloud artifacts repositories describe $ArRepo --location $Region --project $ProjectId --format "value(name)"
+  if ($LASTEXITCODE -eq 0) {
+    $repoExists = $true
+  }
+} catch {
+  $repoExists = $false
+}
+if (-not $repoExists) {
   & gcloud artifacts repositories create $ArRepo `
     --repository-format=docker `
     --location $Region `
