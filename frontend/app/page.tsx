@@ -436,32 +436,45 @@ export default function Home() {
         return;
       }
 
-      if (reconnectAttemptsRef.current >= MAX_WS_RECONNECT_ATTEMPTS) {
+      const scheduleReconnect = () => {
+        if (reconnectAttemptsRef.current >= MAX_WS_RECONNECT_ATTEMPTS) {
+          setEvents((prev) => [
+            ...prev,
+            {
+              type: 'fatal',
+              agent: 'Network',
+              status: `WebSocket disconnected. Retry limit (${MAX_WS_RECONNECT_ATTEMPTS}) reached.`,
+            },
+          ]);
+          setIsSimulating(false);
+          return;
+        }
+
+        reconnectAttemptsRef.current += 1;
+        const delayMs = 2 ** (reconnectAttemptsRef.current - 1) * 1000;
         setEvents((prev) => [
           ...prev,
           {
-            type: 'fatal',
+            type: 'warning',
             agent: 'Network',
-            status: `WebSocket disconnected. Retry limit (${MAX_WS_RECONNECT_ATTEMPTS}) reached.`,
+            status: `Connection lost. Reconnecting in ${delayMs / 1000}s (attempt ${reconnectAttemptsRef.current}/${MAX_WS_RECONNECT_ATTEMPTS})...`,
           },
         ]);
-        setIsSimulating(false);
+        reconnectTimeoutRef.current = window.setTimeout(() => {
+          startWorkflow(currentPromptRef.current, currentSessionIdRef.current, true);
+        }, delayMs);
+      };
+
+      if (currentSessionIdRef.current) {
+        void recoverCompletedRunFromHistory(currentSessionIdRef.current).then((recovered) => {
+          if (!recovered) {
+            scheduleReconnect();
+          }
+        });
         return;
       }
 
-      reconnectAttemptsRef.current += 1;
-      const delayMs = 2 ** (reconnectAttemptsRef.current - 1) * 1000;
-      setEvents((prev) => [
-        ...prev,
-        {
-          type: 'warning',
-          agent: 'Network',
-          status: `Connection lost. Reconnecting in ${delayMs / 1000}s (attempt ${reconnectAttemptsRef.current}/${MAX_WS_RECONNECT_ATTEMPTS})...`,
-        },
-      ]);
-      reconnectTimeoutRef.current = window.setTimeout(() => {
-        startWorkflow(currentPromptRef.current, currentSessionIdRef.current, true);
-      }, delayMs);
+      scheduleReconnect();
     };
   };
 
