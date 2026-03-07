@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { Canvas } from '@react-three/fiber';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, BrainCircuit, Play, Terminal, XCircle, Lightbulb, Loader2, Send } from 'lucide-react';
+import { Activity, BrainCircuit, Play, Terminal, XCircle, Lightbulb, Loader2, Send, ChevronLeft, ChevronRight, Volume2 } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import QuantumParticleField from './components/QuantumSphere';
@@ -39,8 +39,31 @@ type PreviousRunDetail = PreviousRunSummary & {
   final_package?: FinalResultData | null;
 };
 
+type StorybookAsset = {
+  model?: string;
+  mime_type?: string;
+  data?: string;
+};
+
+type StorybookPage = {
+  page_number?: number;
+  title?: string;
+  learning_objective?: string;
+  algorithm_focus?: string;
+  code_focus?: string;
+  page_text?: string;
+  key_takeaways?: string[];
+  illustration_prompt?: string;
+  narration_script?: string;
+  illustration?: StorybookAsset;
+  audio?: StorybookAsset;
+  image_error?: string;
+  audio_error?: string;
+};
+
 type FinalResultData = {
   metadata?: { algorithm: string; qubits: number };
+  media_output_mode?: string;
   problem_algorithm_mapping?: {
     problem_class?: string;
     identified_algorithm?: string;
@@ -50,17 +73,14 @@ type FinalResultData = {
   quantum_story_context?: string;
   complete_code?: string;
   algorithm_explanation?: string;
-  video_prompt?: string;
-  imagen_graphic_prompt?: string;
   qiskit_circuit_diagram?: string;
-  generated_illustration?: string;
-  generated_illustration_mime?: string;
-  generated_video?: string;
-  generated_video_mime?: string;
-  generated_video_uri?: string;
   result_diagram?: string;
-  narrative_audio?: string;
-  narrative_audio_mime?: string;
+  storybook_title?: string;
+  storybook_summary?: string;
+  storybook_target_audience?: string;
+  storybook_art_direction?: string;
+  storybook_pages?: StorybookPage[];
+  storybook_chapters?: StorybookPage[];
   simulation_results?: {
     status?: string;
     histogram?: Record<string, number>;
@@ -79,6 +99,40 @@ type AccessCodeResponse = {
   used?: number;
   remaining?: number;
   exhausted?: boolean;
+};
+
+const normalizeStorybookPages = (result: FinalResultData | null): StorybookPage[] => {
+  if (!result) return [];
+  if (Array.isArray(result.storybook_pages) && result.storybook_pages.length > 0) {
+    return result.storybook_pages;
+  }
+  if (Array.isArray(result.storybook_chapters) && result.storybook_chapters.length > 0) {
+    return result.storybook_chapters.map((chapter, index) => {
+      const legacy = chapter as StorybookPage & {
+        chapter_number?: number;
+        narrative_text?: string;
+        image_prompt?: string;
+        audio_script?: string;
+        image?: StorybookAsset;
+      };
+      return {
+        page_number: legacy.page_number || legacy.chapter_number || index + 1,
+        title: legacy.title,
+        learning_objective: legacy.learning_objective,
+        algorithm_focus: legacy.algorithm_focus,
+        code_focus: legacy.code_focus,
+        page_text: legacy.page_text || legacy.narrative_text,
+        key_takeaways: legacy.key_takeaways,
+        illustration_prompt: legacy.illustration_prompt || legacy.image_prompt,
+        narration_script: legacy.narration_script || legacy.audio_script,
+        illustration: legacy.illustration || legacy.image,
+        audio: legacy.audio,
+        image_error: legacy.image_error,
+        audio_error: legacy.audio_error,
+      };
+    });
+  }
+  return [];
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
@@ -113,6 +167,7 @@ export default function Home() {
   const [previousRunsError, setPreviousRunsError] = useState('');
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
   const [homeNotice, setHomeNotice] = useState('');
+  const [storybookPageIndex, setStorybookPageIndex] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -122,6 +177,11 @@ export default function Home() {
   const currentPromptRef = useRef('');
   const currentSessionIdRef = useRef<string | null>(null);
   const currentAccessTokenRef = useRef('');
+  const storybookPages = normalizeStorybookPages(finalResult);
+  const activeStorybookPageIndex = storybookPages.length > 0
+    ? Math.min(storybookPageIndex, storybookPages.length - 1)
+    : 0;
+  const activeStorybookPage = storybookPages[activeStorybookPageIndex];
 
   const fetchAccessStatus = async () => {
     try {
@@ -284,6 +344,10 @@ export default function Home() {
     }, 0);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    setStorybookPageIndex(0);
+  }, [finalResult?.storybook_pages, finalResult?.storybook_chapters, finalResult?.storybook_title]);
 
   useEffect(() => {
     if (!isAccessGranted) return;
@@ -946,6 +1010,123 @@ export default function Home() {
                   </div>
                 )}
 
+                {storybookPages.length > 0 && (
+                  <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Play size={20} color="#00E5FF" />
+                        <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Storyline Book</h2>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setStorybookPageIndex((prev) => Math.max(0, prev - 1))}
+                          disabled={activeStorybookPageIndex <= 0}
+                          style={{
+                            background: activeStorybookPageIndex <= 0 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.45)',
+                            color: 'white',
+                            border: '1px solid rgba(255,255,255,0.15)',
+                            borderRadius: '8px',
+                            padding: '8px 10px',
+                            cursor: activeStorybookPageIndex <= 0 ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: '13px', minWidth: '76px', textAlign: 'center', fontFamily: 'monospace' }}>
+                          {activeStorybookPageIndex + 1} / {storybookPages.length}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setStorybookPageIndex((prev) => Math.min(storybookPages.length - 1, prev + 1))}
+                          disabled={activeStorybookPageIndex >= storybookPages.length - 1}
+                          style={{
+                            background: activeStorybookPageIndex >= storybookPages.length - 1 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.45)',
+                            color: 'white',
+                            border: '1px solid rgba(255,255,255,0.15)',
+                            borderRadius: '8px',
+                            padding: '8px 10px',
+                            cursor: activeStorybookPageIndex >= storybookPages.length - 1 ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {finalResult.storybook_title && (
+                      <div style={{ color: '#fff', fontWeight: 600, marginBottom: '6px', fontSize: '16px' }}>{finalResult.storybook_title}</div>
+                    )}
+                    {finalResult.storybook_summary && (
+                      <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '14px', lineHeight: '1.6', marginBottom: '8px' }}>{finalResult.storybook_summary}</div>
+                    )}
+                    <div style={{ color: 'rgba(255,255,255,0.62)', fontSize: '12px', marginBottom: '16px' }}>
+                      Audience: {finalResult.storybook_target_audience || 'General'}
+                    </div>
+
+                    {activeStorybookPage && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '0', borderRadius: '14px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)' }}>
+                        <div style={{ background: '#1e2635', minHeight: '460px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                          {activeStorybookPage.illustration?.data ? (
+                            <img
+                              src={`data:${activeStorybookPage.illustration.mime_type || 'image/png'};base64,${activeStorybookPage.illustration.data}`}
+                              alt={`Storybook page ${activeStorybookPage.page_number || activeStorybookPageIndex + 1} illustration`}
+                              style={{ width: '100%', maxHeight: '520px', objectFit: 'cover', borderRadius: '10px' }}
+                            />
+                          ) : (
+                            <div style={{ color: 'rgba(255,255,255,0.45)', fontStyle: 'italic', fontSize: '13px' }}>
+                              {activeStorybookPage.image_error || 'No page illustration generated'}
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ background: '#f6f6f2', color: '#151515', minHeight: '460px', padding: '28px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                            <h3 style={{ margin: 0, fontSize: '24px', fontWeight: 500, fontFamily: '"Georgia", "Times New Roman", serif' }}>
+                              {activeStorybookPage.title || `Page ${activeStorybookPage.page_number || activeStorybookPageIndex + 1}`}
+                            </h3>
+                            <span style={{ fontSize: '14px', color: '#5d5d5d', fontFamily: '"Georgia", "Times New Roman", serif' }}>
+                              {activeStorybookPage.page_number || activeStorybookPageIndex + 1}
+                            </span>
+                          </div>
+
+                          <div style={{ color: '#202020', fontSize: '21px', lineHeight: '1.7', fontFamily: '"Georgia", "Times New Roman", serif', flex: 1 }}>
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {activeStorybookPage.page_text || '_No page text generated._'}
+                            </ReactMarkdown>
+                          </div>
+
+                          {Array.isArray(activeStorybookPage.key_takeaways) && activeStorybookPage.key_takeaways.length > 0 && (
+                            <div style={{ fontSize: '13px', color: '#3f3f3f' }}>
+                              <strong>Key takeaways:</strong> {activeStorybookPage.key_takeaways.join(' | ')}
+                            </div>
+                          )}
+
+                          <div style={{ borderTop: '1px solid rgba(0,0,0,0.14)', paddingTop: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', color: '#1f2d4a', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                              <Volume2 size={14} />
+                              Listen
+                            </div>
+                            {activeStorybookPage.audio?.data ? (
+                              <audio controls style={{ width: '100%' }} src={`data:${activeStorybookPage.audio.mime_type || 'audio/wav'};base64,${activeStorybookPage.audio.data}`} />
+                            ) : (
+                              <div style={{ fontSize: '12px', color: '#737373', fontStyle: 'italic' }}>
+                                {activeStorybookPage.audio_error || 'No audio generated for this page'}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {finalResult.problem_algorithm_mapping && (
                   <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
@@ -970,50 +1151,6 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-
-                {/* Multimedia Panel */}
-                <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                    <Play size={20} color="#00E5FF" />
-                    <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Multimedia Assets</h2>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
-                    <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
-                      <div style={{ fontSize: '12px', color: '#FFD600', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Narrative Audio</div>
-                      {finalResult.narrative_audio ? (
-                        <audio controls style={{ width: '100%' }} src={`data:${finalResult.narrative_audio_mime || 'audio/wav'};base64,${finalResult.narrative_audio}`} />
-                      ) : (
-                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No audio generated</div>
-                      )}
-                    </div>
-
-                    <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
-                      <div style={{ fontSize: '12px', color: '#00E5FF', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Imagen Illustration</div>
-                      {finalResult.generated_illustration ? (
-                        <img
-                          src={`data:${finalResult.generated_illustration_mime || 'image/png'};base64,${finalResult.generated_illustration}`}
-                          alt="Imagen-generated conceptual illustration"
-                          style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}
-                        />
-                      ) : (
-                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No Imagen illustration generated</div>
-                      )}
-                    </div>
-
-                    <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px' }}>
-                      <div style={{ fontSize: '12px', color: '#D500F9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px', fontFamily: 'monospace' }}>Veo Output</div>
-                      {finalResult.generated_video ? (
-                        <video controls style={{ width: '100%', borderRadius: '8px' }} src={`data:${finalResult.generated_video_mime || 'video/mp4'};base64,${finalResult.generated_video}`} />
-                      ) : finalResult.generated_video_uri ? (
-                        <a href={finalResult.generated_video_uri} target="_blank" rel="noreferrer" style={{ color: '#00E5FF', fontSize: '13px' }}>
-                          Open generated video URL
-                        </a>
-                      ) : (
-                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No video generated</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
 
                 {/* Circuit Info (Code, Diagram, Explanation) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>

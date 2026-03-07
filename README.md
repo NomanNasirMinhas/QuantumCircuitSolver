@@ -24,14 +24,14 @@ The backend drives a cyclic, self-correcting workflow utilizing 5 distinct AI pe
    - **Output:** Analyzes the simulator's standard output (histograms/shot counts) to ensure the circuit compiles, runs without syntax errors, and solves the core logic. Generates a Pass/Fail verdict.
 
 5. **Media Producer Agent (Visual Storyteller)**
-   - **Role:** Condenses the highly technical output into a digestible, cinematic format for human stakeholders.
-   - **Output:** Generates rich narrative audio scripts (played via Text-to-Speech) and sophisticated prompts for generative video models (e.g., Google Veo) to visualize the quantum mechanics at play.
+   - **Role:** Converts the technical quantum solution into a cohesive page-by-page storyline.
+   - **Output:** Generates a combined storybook where each page includes synchronized text, illustration, and dedicated narration audio.
 
 ## Presentation Layer (Frontend)
 The user interacts with the system via a visually stunning **Next.js & React Three Fiber** environment:
 - **3D Quantum Particle Field:** A dynamic, immersive background that reacts to the simulation state.
 - **Real-Time Execution Graph:** A live, re-arrangeable `React Flow` node graph that maps every websocket event, visually plotting the back-and-forth interactions and attempts among the agents.
-- **Multimodal Delivery:** Once the pipeline completes, the UI renders the final generated code, the plotted Qiskit `circuit_diagram`, a matplotlib-parsed `result_diagram` (Histogram), the video prompt, and plays the generated narrative audio script.
+- **Multimodal Delivery:** Once the pipeline completes, the UI renders the final generated code, the plotted Qiskit `circuit_diagram`, a matplotlib-parsed `result_diagram` (Histogram), and a page-based storyline reader with per-page audio.
 
 ## ADK Migration Status
 The backend agents are now implemented on **Google Agent Development Kit (ADK)**:
@@ -40,7 +40,7 @@ The backend agents are now implemented on **Google Agent Development Kit (ADK)**
 - `ArchitectAgent` -> ADK `LlmAgent`
 - `ScientistAgent` -> ADK `LlmAgent`
 - `EvaluatorAgent` -> ADK `LlmAgent`
-- `MediaProducerAgent` structured brief + interleaved story -> ADK `LlmAgent`
+- `MediaProducerAgent` storyline page planner -> ADK `LlmAgent`
 
 The orchestrator keeps the same method contracts and websocket protocol, but each agent call now runs through ADK `Runner` sessions.
 
@@ -49,6 +49,12 @@ The orchestrator keeps the same method contracts and websocket protocol, but eac
 pip install -r requirements.txt
 python orchestrator.py
 ```
+
+## Storybook Configuration
+- `STORYBOOK_PAGE_COUNT=8`: number of pages to generate (clamped to `2..16`).
+- `MEDIA_STORYBOOK_MODEL`: optional Gemini model override for storyline page planning.
+- `IMAGEN_MODEL`: optional Imagen model override for per-page illustrations.
+- `GEMINI_TTS_MODEL`: optional Gemini TTS model override for per-page narration.
 
 ## Deploy Custom Orchestrator To Google Cloud Run (Recommended)
 This deploys your current `orchestrator.py` + custom agents backend and the Next.js frontend.

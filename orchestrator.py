@@ -63,6 +63,7 @@ RUN_HISTORY_GCS_BUCKET = (
 )
 RUN_HISTORY_GCS_PREFIX = os.getenv("RUN_HISTORY_GCS_PREFIX", "successful_runs").strip().strip("/")
 RUN_HISTORY_GCS_ENABLED = bool(RUN_HISTORY_GCS_BUCKET and storage is not None)
+STORYBOOK_PAGE_COUNT = max(2, min(int(os.getenv("STORYBOOK_PAGE_COUNT", "8")), 16))
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SAFE_PIP_PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 RUNTIME_PIP_INSTALL_TIMEOUT_SEC = int(os.getenv("RUNTIME_PIP_INSTALL_TIMEOUT_SEC", "300"))
@@ -1146,65 +1147,89 @@ class QuantumOrchestrator:
 
         # --- STEP 5: MEDIA PRODUCTION ---
         python_code = validated_code.get("python_code", validated_code.get("code", ""))
-        await event_callback({"type": "progress", "agent": "MediaProducer", "status": "Generating multimedia brief (audio + Imagen + Veo prompts)..."})
+        await event_callback({"type": "progress", "agent": "MediaProducer", "status": "Generating combined storyline pages (text + image + per-page audio)..."})
         await asyncio.sleep(1)
-        visual_brief = await asyncio.to_thread(self.media_producer.generate_visuals, mapping, python_code)
 
-        if visual_brief.get("error"):
+        # --- STEP 6: ASSET GENERATION ---
+        await event_callback({"type": "progress", "agent": "Environment", "status": "Generating storyline page assets..."})
+
+        circuit_b64 = ""
+        storybook_title = ""
+        storybook_summary = ""
+        storybook_target_audience = ""
+        storybook_art_direction = ""
+        storybook_pages: List[Dict[str, Any]] = []
+
+        storybook_response = await asyncio.to_thread(
+            self.media_producer.generate_storybook,
+            mapping,
+            python_code,
+            STORYBOOK_PAGE_COUNT,
+            True,
+            True,
+        )
+        _save_json(os.path.join(run_dir, "storybook_response.json"), storybook_response)
+        if storybook_response.get("error"):
             await event_callback(
                 {
                     "type": "warning",
                     "agent": "MediaProducer",
-                    "status": f"Prompt brief generation failed: {visual_brief['error']}",
+                    "status": f"Storyline generation failed: {storybook_response['error']}",
                 }
             )
-            visual_brief = {}
         else:
-            await event_callback({"type": "success", "agent": "MediaProducer", "status": "Cinematic visual briefs generated."})
-        _save_json(os.path.join(run_dir, "visual_brief.json"), visual_brief)
+            storybook_title = storybook_response.get("title", "")
+            storybook_summary = storybook_response.get("summary", "")
+            storybook_target_audience = storybook_response.get("target_audience", "")
+            storybook_art_direction = storybook_response.get("art_direction", "")
+            response_pages = storybook_response.get("pages", [])
+            if isinstance(response_pages, list):
+                storybook_pages = response_pages
 
-        # --- STEP 6: ASSET GENERATION ---
-        await event_callback({"type": "progress", "agent": "Environment", "status": "Generating image/video/audio assets..."})
-
-        circuit_b64 = ""
-        audio_b64 = ""
-        audio_mime = "audio/wav"
-        generated_illustration_b64 = ""
-        generated_illustration_mime = "image/png"
-        generated_video_b64 = ""
-        generated_video_mime = "video/mp4"
-        generated_video_uri = ""
-
-        audio_script = visual_brief.get("audio_script", "")
-        if audio_script:
-            try:
-                tts_audio = await asyncio.to_thread(
-                    self.media_producer.generate_contextual_narration_audio,
-                    mapping,
-                    audio_script,
+            generation_warnings = storybook_response.get("generation_warnings", [])
+            if generation_warnings:
+                warning_count = len(generation_warnings) if isinstance(generation_warnings, list) else 0
+                await event_callback(
+                    {
+                        "type": "warning",
+                        "agent": "MediaProducer",
+                        "status": f"Storyline generated with {warning_count} page media warning(s).",
+                    }
                 )
-                _save_json(os.path.join(run_dir, "tts_response.json"), tts_audio)
-                if tts_audio.get("error"):
-                    await event_callback(
-                        {
-                            "type": "warning",
-                            "agent": "Environment",
-                            "status": f"Gemini TTS generation failed: {tts_audio['error']}",
-                        }
-                    )
-                else:
-                    audio_b64 = tts_audio.get("data", "")
-                    audio_mime = tts_audio.get("mime_type", "audio/wav")
-                    await self._emit_content_chunk(
-                        event_callback,
-                        agent="Environment",
-                        content_type="audio",
-                        content=audio_b64,
-                        mime_type=audio_mime,
-                        label="Narrative audio",
-                    )
-            except Exception as e:
-                await event_callback({"type": "warning", "agent": "Environment", "status": f"Audio generation failed: {str(e)}"})
+
+            for index, page in enumerate(storybook_pages):
+                if not isinstance(page, dict):
+                    continue
+                page_number = page.get("page_number", index + 1)
+                page_title = page.get("title", f"Page {page_number}")
+
+                page_image = page.get("illustration", {})
+                if isinstance(page_image, dict):
+                    page_image_b64 = page_image.get("data", "")
+                    page_image_mime = page_image.get("mime_type", "image/png")
+                    if page_image_b64:
+                        await self._emit_content_chunk(
+                            event_callback,
+                            agent="MediaProducer",
+                            content_type="image",
+                            content=page_image_b64,
+                            mime_type=page_image_mime,
+                            label=f"Storybook Page {page_number}: {page_title} (image)",
+                        )
+
+                page_audio = page.get("audio", {})
+                if isinstance(page_audio, dict):
+                    page_audio_b64 = page_audio.get("data", "")
+                    page_audio_mime = page_audio.get("mime_type", "audio/wav")
+                    if page_audio_b64:
+                        await self._emit_content_chunk(
+                            event_callback,
+                            agent="MediaProducer",
+                            content_type="audio",
+                            content=page_audio_b64,
+                            mime_type=page_audio_mime,
+                            label=f"Storybook Page {page_number}: {page_title} (audio)",
+                        )
 
         try:
             circuit_b64 = await asyncio.to_thread(_render_circuit_diagram_b64, python_code)
@@ -1219,56 +1244,6 @@ class QuantumOrchestrator:
                 )
         except Exception as e:
             await event_callback({"type": "warning", "agent": "Environment", "status": f"Circuit diagram generation failed: {str(e)}"})
-
-        imagen_prompt = visual_brief.get("imagen_graphic_prompt", "")
-        if imagen_prompt:
-            imagen_response = await asyncio.to_thread(self.media_producer.generate_imagen_image, imagen_prompt)
-            _save_json(os.path.join(run_dir, "imagen_response.json"), imagen_response)
-            if imagen_response.get("error"):
-                await event_callback(
-                    {
-                        "type": "warning",
-                        "agent": "MediaProducer",
-                        "status": f"Imagen generation skipped: {imagen_response['error']}",
-                    }
-                )
-            else:
-                generated_illustration_b64 = imagen_response.get("data", "")
-                generated_illustration_mime = imagen_response.get("mime_type", "image/png")
-                await self._emit_content_chunk(
-                    event_callback,
-                    agent="MediaProducer",
-                    content_type="image",
-                    content=generated_illustration_b64,
-                    mime_type=generated_illustration_mime,
-                    label="Imagen conceptual illustration",
-                )
-
-        veo_video_prompt = visual_brief.get("veo_video_prompt", visual_brief.get("video_prompt", ""))
-        if veo_video_prompt:
-            veo_response = await asyncio.to_thread(self.media_producer.generate_veo_video, veo_video_prompt)
-            _save_json(os.path.join(run_dir, "veo_response.json"), veo_response)
-            if veo_response.get("error"):
-                await event_callback(
-                    {
-                        "type": "warning",
-                        "agent": "MediaProducer",
-                        "status": f"Veo generation skipped: {veo_response['error']}",
-                    }
-                )
-            else:
-                generated_video_b64 = veo_response.get("data", "")
-                generated_video_mime = veo_response.get("mime_type", "video/mp4")
-                generated_video_uri = veo_response.get("uri", "")
-                if generated_video_b64:
-                    await self._emit_content_chunk(
-                        event_callback,
-                        agent="MediaProducer",
-                        content_type="video",
-                        content=generated_video_b64,
-                        mime_type=generated_video_mime,
-                        label="Veo generated video",
-                    )
 
         await event_callback({"type": "success", "agent": "Environment", "status": "Media assets successfully compiled."})
 
@@ -1285,21 +1260,19 @@ class QuantumOrchestrator:
                 "algorithm": mapping.get('identified_algorithm', mapping.get('algorithm', 'Unknown')),
                 "qubits": mapping.get('qubit_requirement_estimate', mapping.get('qubits', 0))
             },
+            "media_output_mode": "storybook_pages",
             "problem_algorithm_mapping": mapping_summary,
-            "quantum_story_context": mapping.get('story_explanation', ''),
+            "quantum_story_context": mapping.get('story_explanation', '') or storybook_summary,
             "complete_code": python_code,
             "algorithm_explanation": validated_code.get('explanation', ''),
-            "video_prompt": veo_video_prompt,
-            "imagen_graphic_prompt": imagen_prompt,
             "qiskit_circuit_diagram": circuit_b64,
-            "generated_illustration": generated_illustration_b64,
-            "generated_illustration_mime": generated_illustration_mime,
-            "generated_video": generated_video_b64,
-            "generated_video_mime": generated_video_mime,
-            "generated_video_uri": generated_video_uri,
             "result_diagram": result_diagram_b64,
-            "narrative_audio": audio_b64,
-            "narrative_audio_mime": audio_mime,
+            "storybook_title": storybook_title,
+            "storybook_summary": storybook_summary,
+            "storybook_target_audience": storybook_target_audience,
+            "storybook_art_direction": storybook_art_direction,
+            "storybook_pages": storybook_pages,
+            "storybook_page_count": len(storybook_pages),
             "simulation_results": actual_results,
             "nisq_warning": nisq_warning,
             "evaluator_report": evaluator_report,
@@ -1313,21 +1286,32 @@ class QuantumOrchestrator:
             _save_base64_file(os.path.join(run_dir, "qiskit_circuit_diagram.png"), circuit_b64)
         if result_diagram_b64:
             _save_base64_file(os.path.join(run_dir, "simulation_histogram.png"), result_diagram_b64)
-        if generated_illustration_b64:
-            _save_base64_file(
-                os.path.join(run_dir, f"generated_illustration{_ext_from_mime(generated_illustration_mime)}"),
-                generated_illustration_b64,
-            )
-        if generated_video_b64:
-            _save_base64_file(
-                os.path.join(run_dir, f"generated_video{_ext_from_mime(generated_video_mime)}"),
-                generated_video_b64,
-            )
-        if audio_b64:
-            _save_base64_file(
-                os.path.join(run_dir, f"narrative_audio{_ext_from_mime(audio_mime)}"),
-                audio_b64,
-            )
+        if storybook_pages:
+            _save_json(os.path.join(run_dir, "storybook_pages.json"), storybook_pages)
+            for index, page in enumerate(storybook_pages):
+                if not isinstance(page, dict):
+                    continue
+                try:
+                    page_number = int(page.get("page_number", index + 1))
+                except (TypeError, ValueError):
+                    page_number = index + 1
+                page_prefix = f"storybook_page_{page_number:02d}"
+
+                page_image = page.get("illustration", {})
+                if isinstance(page_image, dict) and page_image.get("data"):
+                    page_image_mime = page_image.get("mime_type", "image/png")
+                    _save_base64_file(
+                        os.path.join(run_dir, f"{page_prefix}_image{_ext_from_mime(page_image_mime)}"),
+                        page_image.get("data", ""),
+                    )
+
+                page_audio = page.get("audio", {})
+                if isinstance(page_audio, dict) and page_audio.get("data"):
+                    page_audio_mime = page_audio.get("mime_type", "audio/wav")
+                    _save_base64_file(
+                        os.path.join(run_dir, f"{page_prefix}_audio{_ext_from_mime(page_audio_mime)}"),
+                        page_audio.get("data", ""),
+                    )
         if RUN_HISTORY_GCS_ENABLED:
             upload_result = await asyncio.to_thread(_upload_run_dir_to_gcs, session_id, run_dir)
             if not upload_result.get("ok"):

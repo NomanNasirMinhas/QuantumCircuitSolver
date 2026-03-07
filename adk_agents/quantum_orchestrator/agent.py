@@ -8,7 +8,7 @@ from google.genai import types
 from circuit_architect_agent import SYSTEM_INSTRUCTION as ARCHITECT_SYSTEM_INSTRUCTION
 from evaluator_agent import SYSTEM_INSTRUCTION as EVALUATOR_SYSTEM_INSTRUCTION
 from media_generator_agent import MediaProducerAgent
-from media_generator_agent import SYSTEM_INSTRUCTION as MEDIA_SYSTEM_INSTRUCTION
+from media_generator_agent import STORYBOOK_SYSTEM_INSTRUCTION as MEDIA_STORYBOOK_SYSTEM_INSTRUCTION
 from quantum_scientist_agent import SYSTEM_INSTRUCTION as SCIENTIST_SYSTEM_INSTRUCTION
 from quantum_translator_agent import SYSTEM_INSTRUCTION as TRANSLATOR_SYSTEM_INSTRUCTION
 
@@ -33,25 +33,7 @@ def _json_config(*, temperature: float, max_output_tokens: int, thinking_budget:
     return types.GenerateContentConfig(**kwargs)
 
 
-def _candidate_models(env_var: str, defaults: list[str]) -> list[str]:
-    primary = os.getenv(env_var, "").strip()
-    models: list[str] = []
-    if primary:
-        models.append(primary)
-    models.extend(defaults)
-
-    deduped: list[str] = []
-    for model in models:
-        if model and model not in deduped:
-            deduped.append(model)
-    return deduped
-
-
 _configure_vertex_env()
-_interleaved_models = _candidate_models(
-    "GEMINI_INTERLEAVED_MODEL",
-    ["gemini-2.5-flash-image-preview", "gemini-2.0-flash-exp-image-generation"],
-)
 _media_runtime: Optional[MediaProducerAgent] = None
 
 
@@ -62,19 +44,15 @@ def _get_media_runtime() -> MediaProducerAgent:
     return _media_runtime
 
 
-def generate_imagen_image(prompt: str) -> Dict[str, Any]:
-    """Generate exactly one Imagen image from a text prompt."""
-    return _get_media_runtime().generate_imagen_image(prompt)
-
-
-def generate_veo_video(prompt: str, timeout_sec: int = 300) -> Dict[str, Any]:
-    """Generate a Veo video from a text prompt."""
-    return _get_media_runtime().generate_veo_video(prompt, timeout_sec=timeout_sec)
-
-
-def generate_contextual_narration_audio(mapping: Dict[str, Any], audio_script: str) -> Dict[str, Any]:
-    """Generate contextual narration audio using Gemini TTS."""
-    return _get_media_runtime().generate_contextual_narration_audio(mapping, audio_script)
+def generate_storybook(mapping: Dict[str, Any], code: str, page_count: int = 8) -> Dict[str, Any]:
+    """Generate a full storyline with per-page illustration and per-page audio."""
+    return _get_media_runtime().generate_storybook(
+        mapping=mapping,
+        code=code,
+        page_count=page_count,
+        include_page_images=True,
+        include_page_audio=True,
+    )
 
 
 translator_agent = LlmAgent(
@@ -116,30 +94,14 @@ evaluator_agent = LlmAgent(
     output_key="evaluator_report",
 )
 
-media_producer_structured_agent = LlmAgent(
-    name="media_producer_structured",
-    model=os.getenv("MEDIA_STRUCTURED_MODEL", "gemini-3.1-flash-lite-preview"),
-    description="Creates multimodal storytelling prompts and narrative script.",
-    instruction=MEDIA_SYSTEM_INSTRUCTION,
-    tools=[google_search, generate_imagen_image, generate_veo_video, generate_contextual_narration_audio],
+media_producer_storybook_agent = LlmAgent(
+    name="media_producer_storybook",
+    model=os.getenv("MEDIA_STORYBOOK_MODEL", "gemini-3.1-flash-lite-preview"),
+    description="Creates page-based storyline output with per-page narration and illustrations.",
+    instruction=MEDIA_STORYBOOK_SYSTEM_INSTRUCTION,
+    tools=[google_search, generate_storybook],
     generate_content_config=_json_config(temperature=0.7, max_output_tokens=8192),
-    output_key="media_brief",
-)
-
-media_producer_interleaved_agent = LlmAgent(
-    name="media_producer_interleaved",
-    model=_interleaved_models[0],
-    description="Generates interleaved text + image narrative output.",
-    instruction=MEDIA_SYSTEM_INSTRUCTION,
-    tools=[google_search, generate_imagen_image],
-    generate_content_config=types.GenerateContentConfig(
-        temperature=0.8,
-        top_p=0.95,
-        max_output_tokens=4096,
-        response_modalities=[types.Modality.TEXT, types.Modality.IMAGE],
-        image_config=types.ImageConfig(aspect_ratio="16:9"),
-    ),
-    output_key="interleaved_story",
+    output_key="storybook_package",
 )
 
 root_agent = SequentialAgent(
@@ -150,7 +112,6 @@ root_agent = SequentialAgent(
         architect_agent,
         scientist_agent,
         evaluator_agent,
-        media_producer_structured_agent,
-        media_producer_interleaved_agent,
+        media_producer_storybook_agent,
     ],
 )

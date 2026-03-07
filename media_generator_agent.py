@@ -3,8 +3,6 @@ import io
 import json
 import os
 import re
-import time
-import urllib.request
 import wave
 from typing import Any, Dict, List, Tuple
 
@@ -14,33 +12,40 @@ from google.genai import types
 
 from adk_runtime import ADKAgentRuntime
 
-SYSTEM_INSTRUCTION = """System Instruction: Quantum Media Producer
-Role: You are the Quantum Media Producer Agent, a world-class visual storyteller and prompt engineer. Your mission is to transform abstract quantum data (gates, circuits, and algorithms) into cinematic, metaphorical, and educational visual assets.
-Core Objective: Generate precise, high-fidelity prompts for Google Veo (Video) and Imagen (Graphics). Every visual must reinforce a quantum concept through narrative metaphors.
+STORYBOOK_SYSTEM_INSTRUCTION = """System Instruction: Quantum Storyline Creator
+Role: You are a narrative learning designer that converts technical quantum material into a coherent, page-by-page storybook.
+Core Objective: Build one integrated storyline where each page combines:
+1) a visual illustration concept,
+2) narrative text for reading,
+3) a narration script for audio playback.
 
-1. The Visualization Framework
-Categorize every request into one of three visual styles:
-- The Narrative Hook (Cinematic): High-production sci-fi visuals.
-- The Conceptual Diagram (Schematic): Clean, glowing 3D representations of the math.
-- The Result Visualization (Data Art): Transforming histograms into "Energy Maps" or "Probability Clouds."
-
-2. Output Requirements
-Your output must be a structured JSON object:
+Output requirements:
+Return valid JSON only, with this exact top-level structure:
 {
-  "asset_type": "VIDEO | IMAGE | ANIMATION",
-  "concept_focus": "e.g., Entanglement, Interference",
-  "veo_video_prompt": "Cinematic 4k video prompt specifically mapping the user's domain problem to a relatable real-world cinematic visual... do not be generic.",
-  "imagen_graphic_prompt": "High-resolution 2D schematic prompt...",
-  "audio_script": "A 30-second podcast-style narration script explaining the problem domain and the quantum solution logic as a cohesive, relatable story to a non-quantum person..."
+  "title": "string",
+  "summary": "2-4 sentence overview",
+  "target_audience": "Beginner | Intermediate | Advanced",
+  "art_direction": "consistent visual style guidance for all pages",
+  "pages": [
+    {
+      "page_number": 1,
+      "title": "string",
+      "learning_objective": "specific lesson for this page",
+      "algorithm_focus": "quantum concept explained here",
+      "code_focus": "specific code-level element explained here",
+      "page_text": "storybook text shown on the page in markdown",
+      "key_takeaways": ["item 1", "item 2"],
+      "illustration_prompt": "single-page illustration prompt, visually consistent with other pages",
+      "narration_script": "spoken script for this page audio"
+    }
+  ]
 }
 
-3. Style Guide
-Color Palette: Quantum Blue (#00E5FF) for Superposition, Entangled Purple (#D500F9) for Bell States, Interference Gold (#FFD600) for measurements.
-Atmosphere: Ethereal, vast, and high-tech. Aim for an "Enterprise Learning" or "Sci-Fi Documentary" feel.
-Metaphor Mapping:
-- Superposition = A coin spinning so fast it is both heads and tails.
-- Entanglement = Two glowing threads connecting stars across a galaxy.
-- Measurement = A camera flash causing a blurred object to snap into sharp singular reality.
+Style constraints:
+- Maintain one consistent cast, scene style, and tone across all pages.
+- Use cumulative teaching flow from problem framing to circuit and simulation insight.
+- Keep each page specific to the user's exact scenario and generated code.
+- Avoid generic filler and avoid inventing unsupported APIs.
 """
 
 
@@ -51,56 +56,28 @@ class MediaProducerAgent:
             project=os.environ.get("GCP_PROJECT_ID"),
             location="global",
         )
-        self.structured_model = os.getenv("MEDIA_STRUCTURED_MODEL", "gemini-3.1-flash-lite-preview")
-        self.interleaved_models = self._candidate_models(
-            "GEMINI_INTERLEAVED_MODEL",
-            ["gemini-2.5-flash-image-preview", "gemini-2.0-flash-exp-image-generation"],
-        )
+        self.storybook_model = os.getenv("MEDIA_STORYBOOK_MODEL", "gemini-3.1-flash-lite-preview")
         self.imagen_models = self._candidate_models(
             "IMAGEN_MODEL",
             ["imagen-3.0-generate-002", "imagen-3.0-generate-001"],
-        )
-        self.veo_models = self._candidate_models(
-            "VEO_MODEL",
-            ["veo-2.0-generate-001", "veo-3.0-generate-preview"],
         )
         self.tts_models = self._candidate_models(
             "GEMINI_TTS_MODEL",
             ["gemini-2.5-pro-tts", "gemini-2.5-flash-preview-tts"],
         )
         self.tts_voice_name = os.getenv("GEMINI_TTS_VOICE", "Kore")
-        self.structured_runtime = ADKAgentRuntime(
-            name="media_structured_agent",
-            model=self.structured_model,
-            instruction=SYSTEM_INSTRUCTION,
+        self.storybook_runtime = ADKAgentRuntime(
+            name="media_storybook_agent",
+            model=self.storybook_model,
+            instruction=STORYBOOK_SYSTEM_INSTRUCTION,
             tools=[google_search],
             generate_content_config=types.GenerateContentConfig(
-                temperature=0.7,
+                temperature=0.75,
                 top_p=0.95,
                 max_output_tokens=8192,
                 response_mime_type="application/json",
             ),
         )
-        self.interleaved_runtimes: List[Tuple[str, ADKAgentRuntime]] = []
-        for index, model in enumerate(self.interleaved_models):
-            self.interleaved_runtimes.append(
-                (
-                    model,
-                    ADKAgentRuntime(
-                        name=f"media_interleaved_agent_{index}",
-                        model=model,
-                        instruction=SYSTEM_INSTRUCTION,
-                        tools=[google_search],
-                        generate_content_config=types.GenerateContentConfig(
-                            temperature=0.8,
-                            top_p=0.95,
-                            max_output_tokens=4096,
-                            response_modalities=[types.Modality.TEXT, types.Modality.IMAGE],
-                            image_config=types.ImageConfig(aspect_ratio="16:9"),
-                        ),
-                    ),
-                )
-            )
 
     @staticmethod
     def _candidate_models(env_var: str, defaults: List[str]) -> List[str]:
@@ -125,31 +102,12 @@ class MediaProducerAgent:
         }
 
     @staticmethod
-    def _extract_interleaved_parts(response: Any) -> Tuple[List[str], List[Dict[str, str]]]:
-        narrative_segments: List[str] = []
-        images: List[Dict[str, str]] = []
-
-        candidates = getattr(response, "candidates", None) or []
-        for candidate in candidates:
-            content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) or []
-            for part in parts:
-                if getattr(part, "text", None):
-                    segment = part.text.strip()
-                    if segment:
-                        narrative_segments.append(segment)
-                inline_data = getattr(part, "inline_data", None)
-                if inline_data and getattr(inline_data, "data", None):
-                    images.append(
-                        {
-                            "mime_type": getattr(inline_data, "mime_type", "image/png"),
-                            "data": base64.b64encode(inline_data.data).decode("utf-8"),
-                        }
-                    )
-
-        if not narrative_segments and getattr(response, "text", None):
-            narrative_segments.append(response.text.strip())
-        return narrative_segments, images
+    def _safe_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = default
+        return max(minimum, min(parsed, maximum))
 
     @staticmethod
     def _extract_audio_blob(response: Any) -> Tuple[bytes, str]:
@@ -196,46 +154,84 @@ class MediaProducerAgent:
             return audio_bytes, "audio/mpeg" if mime == "audio/mp3" else mime
         return audio_bytes, "audio/wav"
 
-    def generate_visuals(self, mapping: dict, code: str) -> dict:
-        algo_summary = self._algo_summary(mapping)
-        prompt_text = (
-            "Algorithm mapping with User Problem Context:\n"
-            f"{json.dumps(algo_summary, indent=2)}\n\n"
-            "Please generate the visual assets and audio script. IMPORTANT: Make the video prompt "
-            "and audio script exceptionally specific to the user's problem and story_explanation."
-        )
-        return self.structured_runtime.run_json(prompt_text)
+    @staticmethod
+    def _normalize_storybook_outline(raw_outline: dict, page_count: int) -> dict:
+        title = str(raw_outline.get("title", "")).strip() or "Quantum Storybook"
+        summary = str(raw_outline.get("summary", "")).strip()
+        target_audience = str(raw_outline.get("target_audience", "")).strip() or "Beginner"
+        art_direction = str(raw_outline.get("art_direction", "")).strip()
 
-    def generate_interleaved_story(self, mapping: dict, code: str) -> dict:
+        raw_pages = raw_outline.get("pages", [])
+        if isinstance(raw_pages, dict):
+            raw_pages = [raw_pages]
+        if not isinstance(raw_pages, list):
+            raw_pages = []
+
+        normalized_pages: List[Dict[str, Any]] = []
+        for index, raw_page in enumerate(raw_pages):
+            if not isinstance(raw_page, dict):
+                continue
+            page_number = MediaProducerAgent._safe_int(
+                raw_page.get("page_number"),
+                default=index + 1,
+                minimum=1,
+                maximum=999,
+            )
+            key_takeaways_raw = raw_page.get("key_takeaways", [])
+            key_takeaways: List[str] = []
+            if isinstance(key_takeaways_raw, list):
+                for item in key_takeaways_raw:
+                    text = str(item).strip()
+                    if text:
+                        key_takeaways.append(text)
+
+            normalized_pages.append(
+                {
+                    "page_number": page_number,
+                    "title": str(raw_page.get("title", "")).strip() or f"Page {page_number}",
+                    "learning_objective": str(raw_page.get("learning_objective", "")).strip(),
+                    "algorithm_focus": str(raw_page.get("algorithm_focus", "")).strip(),
+                    "code_focus": str(raw_page.get("code_focus", "")).strip(),
+                    "page_text": str(raw_page.get("page_text", raw_page.get("narrative_text", ""))).strip(),
+                    "key_takeaways": key_takeaways,
+                    "illustration_prompt": str(raw_page.get("illustration_prompt", raw_page.get("image_prompt", ""))).strip(),
+                    "narration_script": str(raw_page.get("narration_script", raw_page.get("audio_script", ""))).strip(),
+                }
+            )
+
+        normalized_pages.sort(key=lambda item: item.get("page_number", 0))
+        capped_pages = normalized_pages[:page_count]
+
+        return {
+            "title": title,
+            "summary": summary,
+            "target_audience": target_audience,
+            "art_direction": art_direction,
+            "pages": capped_pages,
+        }
+
+    def generate_storybook_outline(self, mapping: dict, code: str, page_count: int = 8) -> dict:
+        requested_pages = self._safe_int(page_count, default=8, minimum=2, maximum=16)
         summary = self._algo_summary(mapping)
+        trimmed_code = (code or "").strip()
+        if len(trimmed_code) > 10000:
+            trimmed_code = f"{trimmed_code[:10000]}\n# ... truncated for prompt size"
+
         prompt_text = (
-            "Create an interleaved response with narrative + generated images.\n"
-            "Return rich storytelling text and image assets in the same response.\n"
-            f"Context:\n{json.dumps(summary, indent=2)}"
+            f"Create a {requested_pages}-page educational storybook.\n"
+            "Each page must have story text, an illustration prompt, and narration script.\n"
+            "Ensure all pages form one cohesive storyline with visual continuity.\n\n"
+            f"Context:\n{json.dumps(summary, indent=2)}\n\n"
+            "Generated code to reference:\n"
+            f"```python\n{trimmed_code}\n```"
         )
-        errors: List[str] = []
 
-        for model, runtime in self.interleaved_runtimes:
-            try:
-                interleaved = runtime.run_interleaved(prompt_text)
-                if interleaved.get("error"):
-                    errors.append(f"{model}: {interleaved['error']}")
-                    continue
-                narrative_segments = interleaved.get("narrative_segments", [])
-                images = interleaved.get("assets", [])
-                if narrative_segments or images:
-                    return {
-                        "model": model,
-                        "narrative_segments": narrative_segments,
-                        "images": images,
-                    }
-                errors.append(f"{model}: empty response")
-            except Exception as e:
-                errors.append(f"{model}: {e}")
+        raw_outline = self.storybook_runtime.run_json(prompt_text)
+        if raw_outline.get("error"):
+            return raw_outline
+        return self._normalize_storybook_outline(raw_outline, requested_pages)
 
-        return {"error": "No interleaved model succeeded", "details": errors}
-
-    def generate_imagen_image(self, prompt: str) -> dict:
+    def generate_page_image(self, prompt: str) -> dict:
         if not prompt:
             return {"error": "Prompt is empty"}
 
@@ -247,7 +243,7 @@ class MediaProducerAgent:
                     prompt=prompt,
                     config=types.GenerateImagesConfig(
                         number_of_images=1,
-                        aspect_ratio="16:9",
+                        aspect_ratio="4:3",
                         output_mime_type="image/png",
                     ),
                 )
@@ -264,86 +260,18 @@ class MediaProducerAgent:
             except Exception as e:
                 errors.append(f"{model}: {e}")
 
-        return {"error": "Imagen generation failed", "details": errors}
+        return {"error": "Imagen page generation failed", "details": errors}
 
-    def generate_veo_video(self, prompt: str, timeout_sec: int = 300) -> dict:
-        if not prompt:
-            return {"error": "Prompt is empty"}
-
-        errors: List[str] = []
-        for model in self.veo_models:
-            try:
-                op = self.client.models.generate_videos(
-                    model=model,
-                    prompt=prompt,
-                    config=types.GenerateVideosConfig(
-                        aspect_ratio="16:9",
-                        duration_seconds=8,
-                        generate_audio=False,
-                    ),
-                )
-
-                deadline = time.time() + timeout_sec
-                while not op.done and time.time() < deadline:
-                    time.sleep(5)
-                    op = self.client.operations.get(op)
-
-                if not op.done:
-                    errors.append(f"{model}: timed out")
-                    continue
-                if op.error:
-                    errors.append(f"{model}: {op.error}")
-                    continue
-
-                response = op.response or op.result
-                videos = getattr(response, "generated_videos", None) or []
-                if not videos:
-                    errors.append(f"{model}: no generated videos")
-                    continue
-
-                video_obj = getattr(videos[0], "video", None)
-                video_bytes = getattr(video_obj, "video_bytes", None) if video_obj else None
-                if video_bytes:
-                    return {
-                        "model": model,
-                        "mime_type": getattr(video_obj, "mime_type", "video/mp4"),
-                        "data": base64.b64encode(video_bytes).decode("utf-8"),
-                    }
-
-                uri = getattr(video_obj, "uri", "") if video_obj else ""
-                if uri.startswith("http://") or uri.startswith("https://"):
-                    with urllib.request.urlopen(uri, timeout=30) as resp:
-                        downloaded = resp.read()
-                    return {
-                        "model": model,
-                        "mime_type": getattr(video_obj, "mime_type", "video/mp4"),
-                        "data": base64.b64encode(downloaded).decode("utf-8"),
-                        "uri": uri,
-                    }
-                if uri:
-                    return {
-                        "model": model,
-                        "mime_type": getattr(video_obj, "mime_type", "video/mp4"),
-                        "data": "",
-                        "uri": uri,
-                    }
-                errors.append(f"{model}: no video bytes or URI")
-            except Exception as e:
-                errors.append(f"{model}: {e}")
-
-        return {"error": "Veo generation failed", "details": errors}
-
-    def generate_contextual_narration_audio(self, mapping: dict, audio_script: str) -> dict:
-        if not audio_script:
-            return {"error": "Audio script is empty"}
+    def generate_page_audio(self, mapping: dict, narration_script: str) -> dict:
+        if not narration_script:
+            return {"error": "Narration script is empty"}
 
         summary = self._algo_summary(mapping)
         prompt_text = (
-            "Narrate this in a highly contextual, informative storytelling style.\n"
-            "Sound like a confident documentary host explaining the exact user's quantum scenario.\n"
-            "Use natural pauses and clear emphasis for non-experts.\n\n"
-            f"Context:\n{json.dumps(summary, indent=2)}\n\n"
-            f"Narration script:\n{audio_script}"
+            "Narrate this page as part of a cohesive storybook.\n"
+            "Keep pacing natural and expressive, appropriate for page-turn listening.\n\n"
+            f"Story context:\n{json.dumps(summary, indent=2)}\n\n"
+            f"Page narration script:\n{narration_script}"
         )
 
         errors: List[str] = []
@@ -377,4 +305,68 @@ class MediaProducerAgent:
             except Exception as e:
                 errors.append(f"{model}: {e}")
 
-        return {"error": "Gemini TTS generation failed", "details": errors}
+        return {"error": "Gemini page TTS generation failed", "details": errors}
+
+    def generate_storybook(
+        self,
+        mapping: dict,
+        code: str,
+        page_count: int = 8,
+        include_page_images: bool = True,
+        include_page_audio: bool = True,
+    ) -> dict:
+        outline = self.generate_storybook_outline(mapping, code, page_count=page_count)
+        if outline.get("error"):
+            return outline
+
+        pages = outline.get("pages", [])
+        if not isinstance(pages, list) or not pages:
+            return {"error": "Storybook generation produced no pages", "outline": outline}
+
+        generation_warnings: List[str] = []
+        enriched_pages: List[Dict[str, Any]] = []
+
+        for page in pages:
+            page_payload = dict(page)
+            page_number = page_payload.get("page_number", len(enriched_pages) + 1)
+            page_title = page_payload.get("title", f"Page {page_number}")
+
+            if include_page_images:
+                image_prompt = page_payload.get("illustration_prompt", "")
+                if image_prompt:
+                    image_response = self.generate_page_image(image_prompt)
+                    if image_response.get("error"):
+                        page_payload["image_error"] = image_response.get("error")
+                        generation_warnings.append(
+                            f"Page {page_number} image generation failed: {image_response.get('error')}"
+                        )
+                    else:
+                        page_payload["illustration"] = {
+                            "model": image_response.get("model", ""),
+                            "mime_type": image_response.get("mime_type", "image/png"),
+                            "data": image_response.get("data", ""),
+                        }
+
+            if include_page_audio:
+                narration_script = page_payload.get("narration_script", "")
+                if narration_script:
+                    audio_response = self.generate_page_audio(mapping, narration_script)
+                    if audio_response.get("error"):
+                        page_payload["audio_error"] = audio_response.get("error")
+                        generation_warnings.append(
+                            f"Page {page_number} audio generation failed: {audio_response.get('error')}"
+                        )
+                    else:
+                        page_payload["audio"] = {
+                            "model": audio_response.get("model", ""),
+                            "mime_type": audio_response.get("mime_type", "audio/wav"),
+                            "data": audio_response.get("data", ""),
+                        }
+
+            page_payload["title"] = str(page_title).strip() or f"Page {page_number}"
+            enriched_pages.append(page_payload)
+
+        outline["pages"] = enriched_pages
+        if generation_warnings:
+            outline["generation_warnings"] = generation_warnings
+        return outline
