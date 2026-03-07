@@ -28,6 +28,10 @@ from quantum_scientist_agent import ScientistAgent
 from evaluator_agent import EvaluatorAgent
 from media_generator_agent import MediaProducerAgent
 from session_manager import SessionManager
+try:
+    from google.cloud import storage  # type: ignore
+except Exception:  # pragma: no cover - optional dependency at runtime
+    storage = None
 
 # Stage ordering used to determine which steps to skip on resume
 STAGE_ORDER = ["CREATED", "TRANSLATED", "ARCHITECTED", "AUDITED", "EVALUATED", "COMPLETED"]
@@ -50,13 +54,15 @@ ACCESS_CODE_LIST_ENDPOINT = os.getenv(
     "ACCESS_CODE_LIST_ENDPOINT",
     "/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid",
 )
-INITIAL_ACCESS_CODES = [
-    "QCS-ALPHA-7K2M",
-    "QCS-BETA-9P4R",
-    "QCS-GAMMA-3T8X",
-    "QCS-DELTA-6N5V",
-    "QCS-OMEGA-1H9Q",
-]
+ACCESS_CODE_BOOTSTRAP_COUNT = int(os.getenv("ACCESS_CODE_BOOTSTRAP_COUNT", "5"))
+_RUN_HISTORY_GCS_BUCKET_RAW = os.getenv("RUN_HISTORY_GCS_BUCKET", "").strip()
+RUN_HISTORY_GCS_BUCKET = (
+    ""
+    if _RUN_HISTORY_GCS_BUCKET_RAW.lower() in {"", "__disabled__", "none", "null"}
+    else _RUN_HISTORY_GCS_BUCKET_RAW
+)
+RUN_HISTORY_GCS_PREFIX = os.getenv("RUN_HISTORY_GCS_PREFIX", "successful_runs").strip().strip("/")
+RUN_HISTORY_GCS_ENABLED = bool(RUN_HISTORY_GCS_BUCKET and storage is not None)
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SAFE_PIP_PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 RUNTIME_PIP_INSTALL_TIMEOUT_SEC = int(os.getenv("RUNTIME_PIP_INSTALL_TIMEOUT_SEC", "300"))
@@ -81,6 +87,8 @@ RUNTIME_IMPORT_TO_PACKAGE = {
 }
 STDLIB_MODULE_NAMES = set(getattr(sys, "stdlib_module_names", set()))
 PIP_INSTALL_LOCK = threading.Lock()
+_GCS_CLIENT = None
+GCS_CLIENT_LOCK = threading.Lock()
 
 
 def _parse_allowed_origins() -> List[str]:
@@ -97,7 +105,12 @@ class AccessCodeConsumeRequest(BaseModel):
 class AccessCodeManager:
     def __init__(self, state_file: str, initial_codes: List[str]):
         self.state_file = state_file
-        self.initial_codes = [code.strip().upper() for code in initial_codes if code.strip()]
+        normalized_codes = [code.strip().upper() for code in initial_codes if code.strip()]
+        if normalized_codes:
+            self.initial_codes = normalized_codes
+        else:
+            bootstrap_count = max(1, ACCESS_CODE_BOOTSTRAP_COUNT)
+            self.initial_codes = self._generate_codes(bootstrap_count)
         self._lock = threading.Lock()
         self._ensure_initialized()
 
@@ -317,7 +330,95 @@ def _iso_utc_from_epoch(epoch_seconds: float) -> str:
     return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).isoformat()
 
 
-def _build_run_summary(run_id: str, run_dir: str) -> Dict[str, Any]:
+def _iso_to_epoch(iso_value: str) -> float:
+    try:
+        return datetime.fromisoformat(iso_value.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _gcs_client():
+    if not RUN_HISTORY_GCS_ENABLED:
+        return None
+
+    global _GCS_CLIENT
+    if _GCS_CLIENT is not None:
+        return _GCS_CLIENT
+
+    with GCS_CLIENT_LOCK:
+        if _GCS_CLIENT is None:
+            try:
+                _GCS_CLIENT = storage.Client()
+            except Exception:
+                return None
+    return _GCS_CLIENT
+
+
+def _gcs_bucket():
+    client = _gcs_client()
+    if client is None:
+        return None
+    try:
+        return client.bucket(RUN_HISTORY_GCS_BUCKET)
+    except Exception:
+        return None
+
+
+def _gcs_base_prefix() -> str:
+    if RUN_HISTORY_GCS_PREFIX:
+        return f"{RUN_HISTORY_GCS_PREFIX}/"
+    return ""
+
+
+def _gcs_blob_name(run_id: str, relative_path: str) -> str:
+    rel = (relative_path or "").lstrip("/")
+    return f"{_gcs_base_prefix()}{run_id}/{rel}"
+
+
+def _upload_run_dir_to_gcs(run_id: str, run_dir: str) -> Dict[str, Any]:
+    bucket = _gcs_bucket()
+    if bucket is None:
+        return {"ok": False, "reason": "disabled"}
+
+    uploaded = 0
+    try:
+        for root, _, files in os.walk(run_dir):
+            for filename in files:
+                local_path = os.path.join(root, filename)
+                rel_path = os.path.relpath(local_path, run_dir).replace("\\", "/")
+                blob = bucket.blob(_gcs_blob_name(run_id, rel_path))
+                blob.upload_from_filename(local_path)
+                uploaded += 1
+        return {"ok": True, "uploaded_files": uploaded}
+    except Exception as exc:
+        return {"ok": False, "reason": str(exc), "uploaded_files": uploaded}
+
+
+def _gcs_read_text(run_id: str, relative_path: str) -> str:
+    bucket = _gcs_bucket()
+    if bucket is None:
+        return ""
+    try:
+        blob = bucket.blob(_gcs_blob_name(run_id, relative_path))
+        return blob.download_as_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _gcs_read_json(run_id: str, relative_path: str) -> Optional[Dict[str, Any]]:
+    text = _gcs_read_text(run_id, relative_path)
+    if not text:
+        return None
+    try:
+        loaded = json.loads(text)
+        if isinstance(loaded, dict):
+            return loaded
+    except Exception:
+        return None
+    return None
+
+
+def _build_local_run_summary(run_id: str, run_dir: str) -> Dict[str, Any]:
     run_context = _read_json_if_exists(os.path.join(run_dir, "run_context.json")) or {}
     mapping_summary = _read_json_if_exists(os.path.join(run_dir, "problem_algorithm_mapping.json")) or {}
     prompt = _read_text_if_exists(os.path.join(run_dir, "input_prompt.txt"))
@@ -337,7 +438,32 @@ def _build_run_summary(run_id: str, run_dir: str) -> Dict[str, Any]:
     }
 
 
-def _list_run_history(limit: int) -> List[Dict[str, Any]]:
+def _build_gcs_run_summary(run_id: str, updated_at_iso: str) -> Optional[Dict[str, Any]]:
+    final_package = _gcs_read_json(run_id, "final_package.json")
+    if not final_package:
+        return None
+
+    run_context = _gcs_read_json(run_id, "run_context.json") or {}
+    mapping_summary = (
+        _gcs_read_json(run_id, "problem_algorithm_mapping.json")
+        or _gcs_read_json(run_id, "mapping.json")
+        or {}
+    )
+    prompt = _gcs_read_text(run_id, "input_prompt.txt")
+
+    return {
+        "run_id": run_id,
+        "session_id": str(run_context.get("session_id", run_id)),
+        "prompt": prompt,
+        "status": "COMPLETED",
+        "has_final_package": True,
+        "identified_algorithm": mapping_summary.get("identified_algorithm", ""),
+        "created_at": updated_at_iso,
+        "updated_at": updated_at_iso,
+    }
+
+
+def _list_local_run_history(limit: int) -> List[Dict[str, Any]]:
     root = _debug_runs_root()
     try:
         entries = [entry for entry in os.scandir(root) if entry.is_dir()]
@@ -348,7 +474,7 @@ def _list_run_history(limit: int) -> List[Dict[str, Any]]:
     summaries: List[Dict[str, Any]] = []
     for entry in entries[:limit]:
         try:
-            summary = _build_run_summary(entry.name, entry.path)
+            summary = _build_local_run_summary(entry.name, entry.path)
             if not summary.get("has_final_package"):
                 continue
             summaries.append(summary)
@@ -357,14 +483,136 @@ def _list_run_history(limit: int) -> List[Dict[str, Any]]:
     return summaries
 
 
-def _load_completed_run_package(run_id: str) -> Optional[Dict[str, Any]]:
+def _list_gcs_run_history(limit: int) -> List[Dict[str, Any]]:
+    bucket = _gcs_bucket()
+    if bucket is None:
+        return []
+
+    run_latest_update: Dict[str, str] = {}
+    prefix = _gcs_base_prefix()
+    try:
+        blobs = bucket.list_blobs(prefix=prefix)
+        for blob in blobs:
+            name = blob.name
+            relative_name = name[len(prefix):] if prefix else name
+            parts = relative_name.split("/", 1)
+            if len(parts) != 2:
+                continue
+            run_id = parts[0]
+            if not RUN_ID_PATTERN.match(run_id):
+                continue
+            if parts[1] != "final_package.json":
+                continue
+            updated = blob.updated or datetime.now(timezone.utc)
+            run_latest_update[run_id] = updated.astimezone(timezone.utc).isoformat()
+    except Exception:
+        return []
+
+    sorted_runs = sorted(
+        run_latest_update.items(),
+        key=lambda item: _iso_to_epoch(item[1]),
+        reverse=True,
+    )
+
+    summaries: List[Dict[str, Any]] = []
+    for run_id, updated_iso in sorted_runs[:limit]:
+        summary = _build_gcs_run_summary(run_id, updated_iso)
+        if summary:
+            summaries.append(summary)
+    return summaries
+
+
+def _list_run_history(limit: int) -> List[Dict[str, Any]]:
+    local_summaries = _list_local_run_history(limit * 2)
+    gcs_summaries = _list_gcs_run_history(limit * 2)
+
+    merged: Dict[str, Dict[str, Any]] = {}
+    for summary in local_summaries + gcs_summaries:
+        run_id = str(summary.get("run_id", "")).strip()
+        if not run_id:
+            continue
+        existing = merged.get(run_id)
+        if not existing:
+            merged[run_id] = summary
+            continue
+        if _iso_to_epoch(str(summary.get("updated_at", ""))) > _iso_to_epoch(str(existing.get("updated_at", ""))):
+            merged[run_id] = summary
+
+    ordered = sorted(
+        merged.values(),
+        key=lambda item: _iso_to_epoch(str(item.get("updated_at", ""))),
+        reverse=True,
+    )
+    return ordered[:limit]
+
+
+def _load_local_run_detail(run_id: str) -> Optional[Dict[str, Any]]:
     run_dir = _resolve_run_dir(run_id)
     if not run_dir:
         return None
-    summary = _build_run_summary(run_id, run_dir)
+
+    summary = _build_local_run_summary(run_id, run_dir)
     if not summary.get("has_final_package"):
         return None
-    return _read_json_if_exists(os.path.join(run_dir, "final_package.json"))
+
+    final_package = _read_json_if_exists(os.path.join(run_dir, "final_package.json"))
+    if not final_package:
+        return None
+
+    return {
+        **summary,
+        "run_context": _read_json_if_exists(os.path.join(run_dir, "run_context.json")),
+        "mapping": (
+            _read_json_if_exists(os.path.join(run_dir, "problem_algorithm_mapping.json"))
+            or _read_json_if_exists(os.path.join(run_dir, "mapping.json"))
+        ),
+        "final_package": final_package,
+    }
+
+
+def _load_gcs_run_detail(run_id: str) -> Optional[Dict[str, Any]]:
+    if not RUN_ID_PATTERN.match((run_id or "").strip()):
+        return None
+
+    updated_at = datetime.now(timezone.utc).isoformat()
+    bucket = _gcs_bucket()
+    if bucket is not None:
+        try:
+            final_blob = bucket.blob(_gcs_blob_name(run_id, "final_package.json"))
+            final_blob.reload()
+            if final_blob.updated is not None:
+                updated_at = final_blob.updated.astimezone(timezone.utc).isoformat()
+        except Exception:
+            pass
+
+    final_package = _gcs_read_json(run_id, "final_package.json")
+    if not final_package:
+        return None
+
+    run_context = _gcs_read_json(run_id, "run_context.json") or {}
+    mapping = _gcs_read_json(run_id, "problem_algorithm_mapping.json") or _gcs_read_json(run_id, "mapping.json")
+    prompt = _gcs_read_text(run_id, "input_prompt.txt")
+    summary = _build_gcs_run_summary(run_id, updated_at)
+    if not summary:
+        return None
+
+    return {
+        **summary,
+        "prompt": prompt,
+        "run_context": run_context,
+        "mapping": mapping,
+        "final_package": final_package,
+    }
+
+
+def _load_completed_run_package(run_id: str) -> Optional[Dict[str, Any]]:
+    local_detail = _load_local_run_detail(run_id)
+    if local_detail:
+        return local_detail.get("final_package")
+    gcs_detail = _load_gcs_run_detail(run_id)
+    if gcs_detail:
+        return gcs_detail.get("final_package")
+    return None
 
 
 def _ext_from_mime(mime_type: str) -> str:
@@ -1080,6 +1328,30 @@ class QuantumOrchestrator:
                 os.path.join(run_dir, f"narrative_audio{_ext_from_mime(audio_mime)}"),
                 audio_b64,
             )
+        if RUN_HISTORY_GCS_ENABLED:
+            upload_result = await asyncio.to_thread(_upload_run_dir_to_gcs, session_id, run_dir)
+            if not upload_result.get("ok"):
+                await event_callback(
+                    {
+                        "type": "warning",
+                        "agent": "Environment",
+                        "status": (
+                            "Run completed locally, but failed to sync run history to GCS: "
+                            f"{upload_result.get('reason', 'unknown error')}"
+                        ),
+                    }
+                )
+            else:
+                await event_callback(
+                    {
+                        "type": "success",
+                        "agent": "Environment",
+                        "status": (
+                            "Run history persisted to cloud storage "
+                            f"({upload_result.get('uploaded_files', 0)} files)."
+                        ),
+                    }
+                )
 
         # Mark session as COMPLETED and clean up
         self.session_manager.checkpoint(session_id, "COMPLETED", {})
@@ -1103,7 +1375,7 @@ app.add_middleware(
 
 session_manager = SessionManager()
 orchestrator = QuantumOrchestrator()
-access_code_manager = AccessCodeManager(ACCESS_CODES_STATE_FILE, INITIAL_ACCESS_CODES)
+access_code_manager = AccessCodeManager(ACCESS_CODES_STATE_FILE, [])
 active_workflows_by_ip: Dict[str, int] = {}
 active_workflows_lock = asyncio.Lock()
 
@@ -1154,25 +1426,10 @@ def list_previous_runs(limit: int = 100):
 
 @app.get("/runs/history/{run_id}")
 def get_previous_run(run_id: str):
-    run_dir = _resolve_run_dir(run_id)
-    if not run_dir:
-        raise HTTPException(status_code=404, detail="Run not found.")
-
-    summary = _build_run_summary(run_id, run_dir)
-    if not summary.get("has_final_package"):
-        raise HTTPException(status_code=404, detail="Run is not completed successfully.")
-    final_package = _read_json_if_exists(os.path.join(run_dir, "final_package.json"))
-    if not final_package:
-        raise HTTPException(status_code=404, detail="Run is not completed successfully.")
-    return {
-        **summary,
-        "run_context": _read_json_if_exists(os.path.join(run_dir, "run_context.json")),
-        "mapping": (
-            _read_json_if_exists(os.path.join(run_dir, "problem_algorithm_mapping.json"))
-            or _read_json_if_exists(os.path.join(run_dir, "mapping.json"))
-        ),
-        "final_package": final_package,
-    }
+    detail = _load_local_run_detail(run_id) or _load_gcs_run_detail(run_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Run not found or not completed successfully.")
+    return detail
 
 
 @app.get("/access/status")
@@ -1191,7 +1448,7 @@ def reset_access_codes(master_password: str):
         raise HTTPException(status_code=503, detail="Master password is not configured on the server.")
     if master_password != ACCESS_CODE_MASTER_PASSWORD:
         raise HTTPException(status_code=401, detail="Unauthorized.")
-    reset_result = access_code_manager.reset_codes(count=5)
+    reset_result = access_code_manager.reset_codes(count=max(1, ACCESS_CODE_BOOTSTRAP_COUNT))
     return {
         "status": "reset",
         "message": "New access codes generated.",

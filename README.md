@@ -59,6 +59,9 @@ export PROJECT_ID="your-gcp-project-id"
 export REGION="us-central1"
 export CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
 export ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
+export ACCESS_CODE_BOOTSTRAP_COUNT="5"
+export RUN_HISTORY_GCS_BUCKET="your-persistent-history-bucket"
+export RUN_HISTORY_GCS_PREFIX="successful_runs"
 bash scripts/deploy-cloudrun.sh
 ```
 
@@ -68,22 +71,18 @@ $env:PROJECT_ID="your-gcp-project-id"
 $env:REGION="us-central1"
 $env:CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
 $env:ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
+$env:ACCESS_CODE_BOOTSTRAP_COUNT="5"
+$env:RUN_HISTORY_GCS_BUCKET="your-persistent-history-bucket"
+$env:RUN_HISTORY_GCS_PREFIX="successful_runs"
 .\scripts\deploy-cloudrun.ps1
 ```
 
 ### Access code gate behavior
-- Backend starts with 5 hardcoded one-time access codes.
+- Backend generates one-time access codes at runtime on startup (`ACCESS_CODE_BOOTSTRAP_COUNT`, default `5`).
 - Frontend requires a valid code before showing the main prompt/agent screen.
 - On successful validation, code is consumed and cannot be reused.
 - One consumed code grants exactly one prompt run.
 - When all codes are used, frontend shows "all codes exhausted, ask admin to reset."
-
-Default initial codes:
-- `QCS-ALPHA-7K2M`
-- `QCS-BETA-9P4R`
-- `QCS-GAMMA-3T8X`
-- `QCS-DELTA-6N5V`
-- `QCS-OMEGA-1H9Q`
 
 ### Admin reset route
 The backend exposes a long random reset endpoint:
@@ -94,7 +93,14 @@ Call it with master password query param:
 curl "https://YOUR_BACKEND_URL/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset?master_password=YOUR_MASTER_PASSWORD"
 ```
 
-This returns a freshly generated set of 5 new access codes.
+This returns a freshly generated set of access codes (`ACCESS_CODE_BOOTSTRAP_COUNT`, default `5`).
+
+### Persist successful runs across deployments
+To keep successful run history after Cloud Run instance restarts/deployments, set:
+- `RUN_HISTORY_GCS_BUCKET=<your-gcs-bucket>`
+- `RUN_HISTORY_GCS_PREFIX=successful_runs` (optional folder prefix)
+
+The backend syncs each completed run folder to GCS and `/runs/history` merges local + GCS completed runs.
 
 ### Admin list valid codes route
 The backend exposes another long random endpoint to list currently valid (unused) codes:

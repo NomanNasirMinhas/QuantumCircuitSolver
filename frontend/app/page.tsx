@@ -84,6 +84,7 @@ type AccessCodeResponse = {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/simulate';
 const MAX_WS_RECONNECT_ATTEMPTS = 3;
+const NETWORK_RECOVERY_GRACE_MS = 5000;
 
 const PRESET_PROMPTS = [
   'Find the shortest path in a 10-node network using a Grover-style search strategy.',
@@ -111,11 +112,13 @@ export default function Home() {
   const [isLoadingPreviousRuns, setIsLoadingPreviousRuns] = useState(true);
   const [previousRunsError, setPreviousRunsError] = useState('');
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+  const [homeNotice, setHomeNotice] = useState('');
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const workflowFinishedRef = useRef(false);
+  const nearCompletionRef = useRef(false);
   const currentPromptRef = useRef('');
   const currentSessionIdRef = useRef<string | null>(null);
   const currentAccessTokenRef = useRef('');
@@ -166,6 +169,7 @@ export default function Home() {
         setIsAccessGranted(true);
         setAccessCode('');
         setAccessError('');
+        setHomeNotice('');
       } else if (data.reason === 'exhausted') {
         setAccessError('All access codes are exhausted. Ask admin to reset codes.');
       } else if (data.reason === 'already_used') {
@@ -231,6 +235,7 @@ export default function Home() {
       setPrompt(detail.prompt || '');
       setIsSimulating(false);
       setAccessError('');
+      setHomeNotice('');
       setShowSessionPanel(false);
     } catch (err) {
       console.error('Failed to load previous run:', err);
@@ -254,6 +259,7 @@ export default function Home() {
       setIsAccessGranted(false);
       setAccessToken('');
       currentAccessTokenRef.current = '';
+      setHomeNotice('');
       setEvents((prev) => [
         ...prev,
         {
@@ -327,9 +333,11 @@ export default function Home() {
       }
       reconnectAttemptsRef.current = 0;
       workflowFinishedRef.current = false;
+      nearCompletionRef.current = false;
       setIsSimulating(true);
       setEvents([]);
       setFinalResult(null);
+      setHomeNotice('');
       setShowSessionPanel(false);
     } else {
       if (sessionId) {
@@ -378,6 +386,7 @@ export default function Home() {
 
         if (data.type === 'complete' && data.data) {
           workflowFinishedRef.current = true;
+          nearCompletionRef.current = true;
           setFinalResult(data.data as FinalResultData);
           setIsSimulating(false);
           setIsAccessGranted(false);
@@ -417,6 +426,12 @@ export default function Home() {
           fetchSessions();
           void fetchPreviousRuns();
         } else {
+          if (
+            (data.type === 'success' && data.agent === 'MediaProducer') ||
+            (data.type === 'success' && data.agent === 'Environment' && data.status.includes('Media assets successfully compiled'))
+          ) {
+            nearCompletionRef.current = true;
+          }
           setEvents((prev) => [...prev, data]);
         }
       } catch (err) {
@@ -466,11 +481,53 @@ export default function Home() {
       };
 
       if (currentSessionIdRef.current) {
-        void recoverCompletedRunFromHistory(currentSessionIdRef.current).then((recovered) => {
-          if (!recovered) {
-            scheduleReconnect();
+        const closedSessionId = currentSessionIdRef.current;
+        const isNearCompletion = nearCompletionRef.current;
+        if (!isNearCompletion) {
+          void recoverCompletedRunFromHistory(closedSessionId).then((recovered) => {
+            if (!recovered) {
+              scheduleReconnect();
+            }
+          });
+          return;
+        }
+
+        setEvents((prev) => [
+          ...prev,
+          {
+            type: 'warning',
+            agent: 'Network',
+            status: 'Connection lost near completion. Verifying final run state...',
+          },
+        ]);
+
+        void (async () => {
+          const deadline = Date.now() + NETWORK_RECOVERY_GRACE_MS;
+          while (Date.now() < deadline) {
+            const recovered = await recoverCompletedRunFromHistory(closedSessionId);
+            if (recovered) {
+              return;
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 1000));
           }
-        });
+
+          const recoveredAfterGrace = await recoverCompletedRunFromHistory(closedSessionId);
+          if (recoveredAfterGrace) {
+            return;
+          }
+
+          workflowFinishedRef.current = true;
+          setIsSimulating(false);
+          setIsAccessGranted(false);
+          setAccessToken('');
+          currentAccessTokenRef.current = '';
+          setFinalResult(null);
+          setEvents([]);
+          setShowSessionPanel(false);
+          setHomeNotice('Run completed on backend. Open this session from Previous Runs.');
+          void fetchAccessStatus();
+          void fetchPreviousRuns();
+        })();
         return;
       }
 
@@ -513,6 +570,7 @@ export default function Home() {
     setFinalResult(null);
     setPrompt('');
     setAccessError('');
+    setHomeNotice('');
     setShowSessionPanel(false);
     void fetchPreviousRuns();
   };
@@ -542,6 +600,11 @@ export default function Home() {
             <p style={{ marginTop: 0, color: 'rgba(255,255,255,0.75)', fontSize: '14px', lineHeight: '1.6' }}>
               Enter one-time access code to run a new prompt.
             </p>
+            {homeNotice && (
+              <div style={{ marginBottom: '12px', padding: '10px', borderRadius: '10px', border: '1px solid rgba(0,229,255,0.45)', background: 'rgba(0,229,255,0.12)', color: '#9CEFFF', fontSize: '13px' }}>
+                {homeNotice}
+              </div>
+            )}
 
             {typeof accessInfo?.remaining === 'number' && (
               <p style={{ color: exhausted ? '#FF1744' : '#00E5FF', fontSize: '13px', marginBottom: '14px' }}>
