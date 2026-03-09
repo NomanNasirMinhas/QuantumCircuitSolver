@@ -11,10 +11,10 @@ param(
   [string]$AccessCodeListEndpoint = $(if ($env:ACCESS_CODE_LIST_ENDPOINT) { $env:ACCESS_CODE_LIST_ENDPOINT } else { "/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid" }),
   [string]$AccessCodeStateFile = $(if ($env:ACCESS_CODE_STATE_FILE) { $env:ACCESS_CODE_STATE_FILE } else { "/tmp/access_codes_state.json" }),
   [string]$AccessCodeBootstrapCount = $(if ($env:ACCESS_CODE_BOOTSTRAP_COUNT) { $env:ACCESS_CODE_BOOTSTRAP_COUNT } else { "5" }),
-  [string]$RunHistoryGcsBucket = $(if ($env:RUN_HISTORY_GCS_BUCKET) { $env:RUN_HISTORY_GCS_BUCKET } else { "__DISABLED__" }),
+  [string]$RunHistoryGcsBucket = $(if ($env:RUN_HISTORY_GCS_BUCKET) { $env:RUN_HISTORY_GCS_BUCKET } else { "" }),
   [string]$RunHistoryGcsPrefix = $(if ($env:RUN_HISTORY_GCS_PREFIX) { $env:RUN_HISTORY_GCS_PREFIX } else { "successful_runs" })
 )
-
+#RUN_HISTORY_GCS_BUCKET=__DISABLED__ to disable run history uploads
 $ErrorActionPreference = "Stop"
 if ($PSVersionTable.PSVersion.Major -ge 7) {
   $PSNativeCommandUseErrorActionPreference = $true
@@ -26,6 +26,9 @@ if (-not $ProjectId) {
 if (-not $ProjectId) {
   throw "PROJECT_ID is empty. Set PROJECT_ID or run: gcloud config set project <PROJECT_ID>"
 }
+if ([string]::IsNullOrWhiteSpace($RunHistoryGcsBucket)) {
+  $RunHistoryGcsBucket = "$ProjectId-agentiq-run-history"
+}
 
 $rootDir = Split-Path -Parent $PSScriptRoot
 Set-Location $rootDir
@@ -34,12 +37,14 @@ $backendImage = "$Region-docker.pkg.dev/$ProjectId/$ArRepo/backend:latest"
 $frontendImage = "$Region-docker.pkg.dev/$ProjectId/$ArRepo/frontend:latest"
 
 Write-Host "==> Using PROJECT_ID=$ProjectId, REGION=$Region"
+Write-Host "==> Using RUN_HISTORY_GCS_BUCKET=$RunHistoryGcsBucket"
 
 Write-Host "==> Enabling required Google Cloud services"
 gcloud services enable `
   run.googleapis.com `
   cloudbuild.googleapis.com `
   artifactregistry.googleapis.com `
+  storage.googleapis.com `
   aiplatform.googleapis.com `
   --project $ProjectId
 
@@ -61,6 +66,30 @@ if (-not $repoExists) {
   if ($LASTEXITCODE -ne 0) {
     throw "Failed to create Artifact Registry repo '$ArRepo' in region '$Region'."
   }
+}
+
+if ($RunHistoryGcsBucket.ToLowerInvariant() -ne "__disabled__") {
+  Write-Host "==> Ensuring GCS bucket exists: gs://$RunHistoryGcsBucket"
+  $bucketExists = $false
+  try {
+    $null = & gcloud storage buckets describe "gs://$RunHistoryGcsBucket" --project $ProjectId --format "value(name)"
+    if ($LASTEXITCODE -eq 0) {
+      $bucketExists = $true
+    }
+  } catch {
+    $bucketExists = $false
+  }
+  if (-not $bucketExists) {
+    & gcloud storage buckets create "gs://$RunHistoryGcsBucket" `
+      --location $Region `
+      --uniform-bucket-level-access `
+      --project $ProjectId
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to create GCS bucket 'gs://$RunHistoryGcsBucket' in location '$Region'."
+    }
+  }
+} else {
+  Write-Host "==> RUN_HISTORY_GCS_BUCKET is disabled; skipping bucket creation"
 }
 
 Write-Host "==> Deploying backend service: $BackendService"
