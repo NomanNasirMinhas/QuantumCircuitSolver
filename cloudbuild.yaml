@@ -4,20 +4,23 @@ steps:
     args:
       - -ceu
       - |
-        if [[ -z "${_ACCESS_CODE_RESET_ENDPOINT// }" ]]; then
+        reset_endpoint='${_ACCESS_CODE_RESET_ENDPOINT}'
+        list_endpoint='${_ACCESS_CODE_LIST_ENDPOINT}'
+
+        if [[ -z "${reset_endpoint// }" ]]; then
           echo "_ACCESS_CODE_RESET_ENDPOINT is required (example: /admin/access/reset)."
           exit 1
         fi
-        if [[ -z "${_ACCESS_CODE_LIST_ENDPOINT// }" ]]; then
+        if [[ -z "${list_endpoint// }" ]]; then
           echo "_ACCESS_CODE_LIST_ENDPOINT is required (example: /admin/access/list)."
           exit 1
         fi
-        if [[ "${_ACCESS_CODE_RESET_ENDPOINT}" != /* ]]; then
-          echo "_ACCESS_CODE_RESET_ENDPOINT must start with '/'. Current value: ${_ACCESS_CODE_RESET_ENDPOINT}"
+        if [[ "${reset_endpoint}" != /* ]]; then
+          echo "_ACCESS_CODE_RESET_ENDPOINT must start with '/'. Current value: ${reset_endpoint}"
           exit 1
         fi
-        if [[ "${_ACCESS_CODE_LIST_ENDPOINT}" != /* ]]; then
-          echo "_ACCESS_CODE_LIST_ENDPOINT must start with '/'. Current value: ${_ACCESS_CODE_LIST_ENDPOINT}"
+        if [[ "${list_endpoint}" != /* ]]; then
+          echo "_ACCESS_CODE_LIST_ENDPOINT must start with '/'. Current value: ${list_endpoint}"
           exit 1
         fi
 
