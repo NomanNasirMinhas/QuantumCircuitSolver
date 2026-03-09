@@ -23,6 +23,22 @@ if [[ -z "${PROJECT_ID}" ]]; then
   echo "PROJECT_ID is empty. Set PROJECT_ID or run: gcloud config set project <PROJECT_ID>"
   exit 1
 fi
+if [[ -z "${ACCESS_CODE_RESET_ENDPOINT// }" ]]; then
+  echo "ACCESS_CODE_RESET_ENDPOINT is required (example: /admin/access/reset)."
+  exit 1
+fi
+if [[ -z "${ACCESS_CODE_LIST_ENDPOINT// }" ]]; then
+  echo "ACCESS_CODE_LIST_ENDPOINT is required (example: /admin/access/list)."
+  exit 1
+fi
+if [[ "${ACCESS_CODE_RESET_ENDPOINT}" != /* ]]; then
+  echo "ACCESS_CODE_RESET_ENDPOINT must start with '/'. Current value: ${ACCESS_CODE_RESET_ENDPOINT}"
+  exit 1
+fi
+if [[ "${ACCESS_CODE_LIST_ENDPOINT}" != /* ]]; then
+  echo "ACCESS_CODE_LIST_ENDPOINT must start with '/'. Current value: ${ACCESS_CODE_LIST_ENDPOINT}"
+  exit 1
+fi
 if [[ -z "${RUN_HISTORY_GCS_BUCKET}" ]]; then
   RUN_HISTORY_GCS_BUCKET="${PROJECT_ID}-agentiq-run-history"
 fi

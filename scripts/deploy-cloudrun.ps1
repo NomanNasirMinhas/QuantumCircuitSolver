@@ -26,6 +26,18 @@ if (-not $ProjectId) {
 if (-not $ProjectId) {
   throw "PROJECT_ID is empty. Set PROJECT_ID or run: gcloud config set project <PROJECT_ID>"
 }
+if ([string]::IsNullOrWhiteSpace($AccessCodeResetEndpoint)) {
+  throw "ACCESS_CODE_RESET_ENDPOINT is required (example: /admin/access/reset)."
+}
+if ([string]::IsNullOrWhiteSpace($AccessCodeListEndpoint)) {
+  throw "ACCESS_CODE_LIST_ENDPOINT is required (example: /admin/access/list)."
+}
+if (-not $AccessCodeResetEndpoint.StartsWith("/")) {
+  throw "ACCESS_CODE_RESET_ENDPOINT must start with '/'. Current value: '$AccessCodeResetEndpoint'"
+}
+if (-not $AccessCodeListEndpoint.StartsWith("/")) {
+  throw "ACCESS_CODE_LIST_ENDPOINT must start with '/'. Current value: '$AccessCodeListEndpoint'"
+}
 if ([string]::IsNullOrWhiteSpace($RunHistoryGcsBucket)) {
   $RunHistoryGcsBucket = "$ProjectId-agentiq-run-history"
 }

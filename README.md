@@ -78,6 +78,8 @@ export BACKEND_SERVICE="agentiq-orchestrator"
 export FRONTEND_SERVICE="agentiq-frontend"
 export CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
 export ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
+export ACCESS_CODE_RESET_ENDPOINT="/admin/access/reset"
+export ACCESS_CODE_LIST_ENDPOINT="/admin/access/list"
 export ACCESS_CODE_BOOTSTRAP_COUNT="5"
 export RUN_HISTORY_GCS_BUCKET="your-persistent-history-bucket"
 export RUN_HISTORY_GCS_PREFIX="successful_runs"
@@ -93,6 +95,8 @@ $env:BACKEND_SERVICE="agentiq-orchestrator"
 $env:FRONTEND_SERVICE="agentiq-frontend"
 $env:CORS_ALLOW_ORIGINS="https://your-frontend-domain.example"
 $env:ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
+$env:ACCESS_CODE_RESET_ENDPOINT="/admin/access/reset"
+$env:ACCESS_CODE_LIST_ENDPOINT="/admin/access/list"
 $env:ACCESS_CODE_BOOTSTRAP_COUNT="5"
 $env:RUN_HISTORY_GCS_BUCKET="your-persistent-history-bucket"
 $env:RUN_HISTORY_GCS_PREFIX="successful_runs"
@@ -107,7 +111,7 @@ $env:RUN_HISTORY_GCS_PREFIX="successful_runs"
 - When all codes are used, frontend shows "all codes exhausted, ask admin to reset."
 
 ### Admin reset route
-The backend exposes a configurable admin reset endpoint (set via `ACCESS_CODE_RESET_ENDPOINT` env var).
+The backend exposes a configurable admin reset endpoint (set via required `ACCESS_CODE_RESET_ENDPOINT` env var).
 
 Call it with the master password in the `Authorization` header:
 ```bash
@@ -125,7 +129,7 @@ To keep successful run history after Cloud Run instance restarts/deployments, se
 The backend syncs each completed run folder to GCS and `/runs/history` merges local + GCS completed runs.
 
 ### Admin list valid codes route
-The backend exposes another configurable endpoint to list currently valid (unused) codes (set via `ACCESS_CODE_LIST_ENDPOINT` env var).
+The backend exposes another configurable endpoint to list currently valid (unused) codes (set via required `ACCESS_CODE_LIST_ENDPOINT` env var).
 
 ```bash
 curl -X POST "https://YOUR_BACKEND_URL/YOUR_LIST_ENDPOINT" \
@@ -139,11 +143,59 @@ curl -X POST "https://YOUR_BACKEND_URL/YOUR_LIST_ENDPOINT" \
 4. Resolves backend URL and computes websocket URL (`wss://.../ws/simulate`).
 5. Builds/deploys frontend service from `frontend/cloudbuild.yaml` with correct runtime URLs.
 
+## Reproducible Testing
+Run the checks below in order. They validate that admin endpoint env vars are mandatory and that auth behavior is stable.
+
+### 1) Missing admin endpoint env vars must fail
+PowerShell:
+```powershell
+$env:ACCESS_CODE_RESET_ENDPOINT=""
+$env:ACCESS_CODE_LIST_ENDPOINT=""
+python orchestrator.py
+```
+Expected result: process exits immediately with `RuntimeError` mentioning the missing env var.
+
+Bash:
+```bash
+unset ACCESS_CODE_RESET_ENDPOINT
+unset ACCESS_CODE_LIST_ENDPOINT
+python orchestrator.py
+```
+Expected result: process exits immediately with `RuntimeError` mentioning the missing env var.
+
+### 2) Backend starts when required env vars are set
+PowerShell:
+```powershell
+$env:ACCESS_CODE_MASTER_PASSWORD="your-strong-master-password"
+$env:ACCESS_CODE_RESET_ENDPOINT="/admin/access/reset"
+$env:ACCESS_CODE_LIST_ENDPOINT="/admin/access/list"
+python orchestrator.py
+```
+Expected result: server starts successfully.
+
+### 3) Admin endpoint auth behavior is deterministic
+Without auth header (expect `401`):
+```bash
+curl -i -X POST "http://localhost:8000/admin/access/list"
+```
+With valid bearer token (expect `200`):
+```bash
+curl -i -X POST "http://localhost:8000/admin/access/list" \
+  -H "Authorization: Bearer your-strong-master-password"
+```
+
+### 4) Build guard fails early when admin endpoint substitutions are missing
+```bash
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_REGION=us-central1,_SERVICE_NAME=agentiq-orchestrator,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/agentiq/backend:latest,_CORS_ORIGINS=https://example.com,_GCP_LOCATION=global,_ACCESS_CODE_MASTER_PASSWORD=secret,_ACCESS_CODE_RESET_ENDPOINT=,_ACCESS_CODE_LIST_ENDPOINT=,_ACCESS_CODE_STATE_FILE=/tmp/access_codes_state.json,_ACCESS_CODE_BOOTSTRAP_COUNT=5,_RUN_HISTORY_GCS_BUCKET=__DISABLED__,_RUN_HISTORY_GCS_PREFIX=successful_runs
+```
+Expected result: Cloud Build fails in the first step with a message that `_ACCESS_CODE_RESET_ENDPOINT` or `_ACCESS_CODE_LIST_ENDPOINT` is required.
+
 ### Manual deploy (if needed)
 Backend:
 ```bash
 gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_REGION=us-central1,_SERVICE_NAME=agentiq-orchestrator,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/agentiq/backend:latest,_CORS_ORIGINS=https://your-frontend-domain.example
+  --substitutions=_REGION=us-central1,_SERVICE_NAME=agentiq-orchestrator,_IMAGE=us-central1-docker.pkg.dev/$PROJECT_ID/agentiq/backend:latest,_CORS_ORIGINS=https://your-frontend-domain.example,_ACCESS_CODE_RESET_ENDPOINT=/admin/access/reset,_ACCESS_CODE_LIST_ENDPOINT=/admin/access/list
 ```
 
 Frontend:

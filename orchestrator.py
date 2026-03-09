@@ -49,8 +49,6 @@ ACCESS_CODES_STATE_FILE = os.getenv(
 )
 ACCESS_CODE_MASTER_PASSWORD = os.getenv("ACCESS_CODE_MASTER_PASSWORD", "").strip()
 _INSECURE_PLACEHOLDER_PASSWORDS = {"change-this-master-password", "changeme", "password", ""}
-ACCESS_CODE_RESET_ENDPOINT = os.getenv("ACCESS_CODE_RESET_ENDPOINT", "").strip()
-ACCESS_CODE_LIST_ENDPOINT = os.getenv("ACCESS_CODE_LIST_ENDPOINT", "").strip()
 ACCESS_CODE_BOOTSTRAP_COUNT = int(os.getenv("ACCESS_CODE_BOOTSTRAP_COUNT", "5"))
 _RUN_HISTORY_GCS_BUCKET_RAW = os.getenv("RUN_HISTORY_GCS_BUCKET", "").strip()
 RUN_HISTORY_GCS_BUCKET = (
@@ -87,6 +85,19 @@ STDLIB_MODULE_NAMES = set(getattr(sys, "stdlib_module_names", set()))
 PIP_INSTALL_LOCK = threading.Lock()
 _GCS_CLIENT = None
 GCS_CLIENT_LOCK = threading.Lock()
+
+
+def _require_admin_endpoint_env(var_name: str) -> str:
+    value = os.getenv(var_name, "").strip()
+    if not value:
+        raise RuntimeError(f"{var_name} must be set (example: /admin/access/reset).")
+    if not value.startswith("/"):
+        raise RuntimeError(f"{var_name} must start with '/'. Current value: {value!r}")
+    return value
+
+
+ACCESS_CODE_RESET_ENDPOINT = _require_admin_endpoint_env("ACCESS_CODE_RESET_ENDPOINT")
+ACCESS_CODE_LIST_ENDPOINT = _require_admin_endpoint_env("ACCESS_CODE_LIST_ENDPOINT")
 
 
 def _parse_allowed_origins() -> List[str]:

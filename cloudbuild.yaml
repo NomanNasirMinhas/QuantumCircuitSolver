@@ -1,4 +1,26 @@
 steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        if [[ -z "${_ACCESS_CODE_RESET_ENDPOINT// }" ]]; then
+          echo "_ACCESS_CODE_RESET_ENDPOINT is required (example: /admin/access/reset)."
+          exit 1
+        fi
+        if [[ -z "${_ACCESS_CODE_LIST_ENDPOINT// }" ]]; then
+          echo "_ACCESS_CODE_LIST_ENDPOINT is required (example: /admin/access/list)."
+          exit 1
+        fi
+        if [[ "${_ACCESS_CODE_RESET_ENDPOINT}" != /* ]]; then
+          echo "_ACCESS_CODE_RESET_ENDPOINT must start with '/'. Current value: ${_ACCESS_CODE_RESET_ENDPOINT}"
+          exit 1
+        fi
+        if [[ "${_ACCESS_CODE_LIST_ENDPOINT}" != /* ]]; then
+          echo "_ACCESS_CODE_LIST_ENDPOINT must start with '/'. Current value: ${_ACCESS_CODE_LIST_ENDPOINT}"
+          exit 1
+        fi
+
   - name: gcr.io/cloud-builders/docker
     args:
       - build
