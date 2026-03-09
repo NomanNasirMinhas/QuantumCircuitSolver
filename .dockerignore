@@ -11,3 +11,6 @@ node_modules
 npm-debug.log
 *.log
 .env
+.env.*
+access_codes_state.json
+debug_runs

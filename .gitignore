@@ -1,6 +1,9 @@
 venv
+.venv
 __pycache__
 .env
+.env.*
+!.env.example
 sessions/
 debug_runs/
 access_codes_state.json

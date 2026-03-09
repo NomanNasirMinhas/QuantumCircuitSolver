@@ -70,9 +70,9 @@ substitutions:
   _MAX_PROMPT_LENGTH: "2000"
   _MAX_ACTIVE_WORKFLOWS_PER_IP: "1"
   _DEBUG_RUNS_DIR: /tmp/debug_runs
-  _ACCESS_CODE_MASTER_PASSWORD: change-this-master-password
-  _ACCESS_CODE_RESET_ENDPOINT: /admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset
-  _ACCESS_CODE_LIST_ENDPOINT: /admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid
+  _ACCESS_CODE_MASTER_PASSWORD: ""
+  _ACCESS_CODE_RESET_ENDPOINT: ""
+  _ACCESS_CODE_LIST_ENDPOINT: ""
   _ACCESS_CODE_STATE_FILE: /tmp/access_codes_state.json
   _ACCESS_CODE_BOOTSTRAP_COUNT: "5"
   _RUN_HISTORY_GCS_BUCKET: __DISABLED__

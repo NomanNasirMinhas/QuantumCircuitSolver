@@ -107,12 +107,12 @@ $env:RUN_HISTORY_GCS_PREFIX="successful_runs"
 - When all codes are used, frontend shows "all codes exhausted, ask admin to reset."
 
 ### Admin reset route
-The backend exposes a long random reset endpoint:
-- Default: `/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset`
+The backend exposes a configurable admin reset endpoint (set via `ACCESS_CODE_RESET_ENDPOINT` env var).
 
-Call it with master password query param:
+Call it with the master password in the `Authorization` header:
 ```bash
-curl "https://YOUR_BACKEND_URL/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset?master_password=YOUR_MASTER_PASSWORD"
+curl -X POST "https://YOUR_BACKEND_URL/YOUR_RESET_ENDPOINT" \
+  -H "Authorization: Bearer YOUR_MASTER_PASSWORD"
 ```
 
 This returns a freshly generated set of access codes (`ACCESS_CODE_BOOTSTRAP_COUNT`, default `5`).
@@ -125,11 +125,11 @@ To keep successful run history after Cloud Run instance restarts/deployments, se
 The backend syncs each completed run folder to GCS and `/runs/history` merges local + GCS completed runs.
 
 ### Admin list valid codes route
-The backend exposes another long random endpoint to list currently valid (unused) codes:
-- Default: `/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid`
+The backend exposes another configurable endpoint to list currently valid (unused) codes (set via `ACCESS_CODE_LIST_ENDPOINT` env var).
 
 ```bash
-curl "https://YOUR_BACKEND_URL/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid?master_password=YOUR_MASTER_PASSWORD"
+curl -X POST "https://YOUR_BACKEND_URL/YOUR_LIST_ENDPOINT" \
+  -H "Authorization: Bearer YOUR_MASTER_PASSWORD"
 ```
 
 ### What the script does

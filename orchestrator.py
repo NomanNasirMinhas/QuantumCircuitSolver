@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -14,7 +16,7 @@ import importlib.util
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -46,14 +48,9 @@ ACCESS_CODES_STATE_FILE = os.getenv(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "access_codes_state.json"),
 )
 ACCESS_CODE_MASTER_PASSWORD = os.getenv("ACCESS_CODE_MASTER_PASSWORD", "").strip()
-ACCESS_CODE_RESET_ENDPOINT = os.getenv(
-    "ACCESS_CODE_RESET_ENDPOINT",
-    "/admin/internal/7f1acb4e2a9244be9fd8c6d5a73b1e54/access-codes/reset",
-)
-ACCESS_CODE_LIST_ENDPOINT = os.getenv(
-    "ACCESS_CODE_LIST_ENDPOINT",
-    "/admin/internal/2bf87f2d15fd43e1b9c4d8f0a56c7a91/access-codes/valid",
-)
+_INSECURE_PLACEHOLDER_PASSWORDS = {"change-this-master-password", "changeme", "password", ""}
+ACCESS_CODE_RESET_ENDPOINT = os.getenv("ACCESS_CODE_RESET_ENDPOINT", "").strip()
+ACCESS_CODE_LIST_ENDPOINT = os.getenv("ACCESS_CODE_LIST_ENDPOINT", "").strip()
 ACCESS_CODE_BOOTSTRAP_COUNT = int(os.getenv("ACCESS_CODE_BOOTSTRAP_COUNT", "5"))
 _RUN_HISTORY_GCS_BUCKET_RAW = os.getenv("RUN_HISTORY_GCS_BUCKET", "").strip()
 RUN_HISTORY_GCS_BUCKET = (
@@ -265,7 +262,22 @@ class AccessCodeManager:
             state = self._build_state(new_codes)
             self._write_state(state)
             status = self._status_from_state(state)
+        # Return codes only to the caller (admin endpoint decides what to expose)
         return {"generated_codes": new_codes, **status}
+
+
+def _verify_master_password(provided: str) -> bool:
+    """Timing-safe comparison of the master password."""
+    if not ACCESS_CODE_MASTER_PASSWORD:
+        return False
+    if ACCESS_CODE_MASTER_PASSWORD.lower() in _INSECURE_PLACEHOLDER_PASSWORDS:
+        return False
+    expected = ACCESS_CODE_MASTER_PASSWORD.encode("utf-8")
+    given = (provided or "").strip().encode("utf-8")
+    return hmac.compare_digest(
+        hashlib.sha256(expected).digest(),
+        hashlib.sha256(given).digest(),
+    )
 
 
 def _ensure_run_dir(session_id: str) -> str:
@@ -1426,34 +1438,43 @@ def consume_access_code(payload: AccessCodeConsumeRequest):
     return access_code_manager.consume_code(payload.code)
 
 
-@app.get(ACCESS_CODE_RESET_ENDPOINT)
-def reset_access_codes(master_password: str):
-    if not ACCESS_CODE_MASTER_PASSWORD:
-        raise HTTPException(status_code=503, detail="Master password is not configured on the server.")
-    if master_password != ACCESS_CODE_MASTER_PASSWORD:
-        raise HTTPException(status_code=401, detail="Unauthorized.")
-    reset_result = access_code_manager.reset_codes(count=max(1, ACCESS_CODE_BOOTSTRAP_COUNT))
-    return {
-        "status": "reset",
-        "message": "New access codes generated.",
-        **reset_result,
-        "reset_endpoint": ACCESS_CODE_RESET_ENDPOINT,
-    }
+def _get_master_password_from_header(request) -> str:
+    """Extract master password from Authorization header (Bearer token)."""
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
 
 
-@app.get(ACCESS_CODE_LIST_ENDPOINT)
-def list_valid_access_codes(master_password: str):
-    if not ACCESS_CODE_MASTER_PASSWORD:
-        raise HTTPException(status_code=503, detail="Master password is not configured on the server.")
-    if master_password != ACCESS_CODE_MASTER_PASSWORD:
-        raise HTTPException(status_code=401, detail="Unauthorized.")
-    listing = access_code_manager.list_valid_codes()
-    return {
-        "status": "ok",
-        "message": "Current valid access codes.",
-        **listing,
-        "list_endpoint": ACCESS_CODE_LIST_ENDPOINT,
-    }
+if ACCESS_CODE_RESET_ENDPOINT:
+    @app.post(ACCESS_CODE_RESET_ENDPOINT)
+    async def reset_access_codes(request: Request):
+        master_pw = _get_master_password_from_header(request)
+        if not _verify_master_password(master_pw):
+            raise HTTPException(status_code=401, detail="Unauthorized.")
+        reset_result = access_code_manager.reset_codes(count=max(1, ACCESS_CODE_BOOTSTRAP_COUNT))
+        return {
+            "status": "reset",
+            "message": "New access codes generated.",
+            "generated_codes": reset_result.get("generated_codes", []),
+            "total": reset_result.get("total", 0),
+            "remaining": reset_result.get("remaining", 0),
+        }
+
+if ACCESS_CODE_LIST_ENDPOINT:
+    @app.post(ACCESS_CODE_LIST_ENDPOINT)
+    async def list_valid_access_codes(request: Request):
+        master_pw = _get_master_password_from_header(request)
+        if not _verify_master_password(master_pw):
+            raise HTTPException(status_code=401, detail="Unauthorized.")
+        listing = access_code_manager.list_valid_codes()
+        return {
+            "status": "ok",
+            "message": "Current valid access codes.",
+            "valid_codes": listing.get("valid_codes", []),
+            "total": listing.get("total", 0),
+            "remaining": listing.get("remaining", 0),
+        }
 
 
 @app.websocket("/ws/simulate")
