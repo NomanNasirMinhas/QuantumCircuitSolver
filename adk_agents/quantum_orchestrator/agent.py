@@ -77,7 +77,7 @@ architect_agent = LlmAgent(
 
 scientist_agent = LlmAgent(
     name="scientist",
-    model=os.getenv("SCIENTIST_MODEL", "gemini-3.1-flash-lite-preview"),
+    model=os.getenv("SCIENTIST_MODEL", "gemini-3.1-pro-preview"),
     description="Audits scientific validity and hardware feasibility.",
     instruction=SCIENTIST_SYSTEM_INSTRUCTION,
     tools=[google_search],
@@ -87,7 +87,7 @@ scientist_agent = LlmAgent(
 
 evaluator_agent = LlmAgent(
     name="evaluator",
-    model=os.getenv("EVALUATOR_MODEL", "gemini-3.1-flash-lite-preview"),
+    model=os.getenv("EVALUATOR_MODEL", "gemini-3.1-pro-preview"),
     description="Performs final quality verdict on the proposed solution.",
     instruction=EVALUATOR_SYSTEM_INSTRUCTION,
     generate_content_config=_json_config(temperature=0.1, max_output_tokens=8192, thinking_budget=2048),
