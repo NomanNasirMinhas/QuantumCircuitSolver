@@ -36,7 +36,7 @@ Output Format (JSON only):
 
 class EvaluatorAgent:
     def __init__(self):
-        self.model = os.getenv("EVALUATOR_MODEL", "gemini-3.1-flash-lite-preview")
+        self.model = os.getenv("EVALUATOR_MODEL", "gemini-3.1-pro-preview")
         self.runtime = ADKAgentRuntime(
             name="evaluator_agent",
             model=self.model,
