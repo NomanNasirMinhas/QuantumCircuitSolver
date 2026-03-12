@@ -43,6 +43,8 @@ type StorybookAsset = {
   model?: string;
   mime_type?: string;
   data?: string;
+  is_placeholder?: boolean;
+  source_error?: string;
 };
 
 type StorybookPage = {
@@ -58,7 +60,9 @@ type StorybookPage = {
   illustration?: StorybookAsset;
   audio?: StorybookAsset;
   image_error?: string;
+  image_error_detail?: string;
   audio_error?: string;
+  audio_error_detail?: string;
 };
 
 type FinalResultData = {
@@ -81,11 +85,29 @@ type FinalResultData = {
   storybook_art_direction?: string;
   storybook_pages?: StorybookPage[];
   storybook_chapters?: StorybookPage[];
+  storybook_generation_warnings?: string[];
   simulation_results?: {
     status?: string;
     histogram?: Record<string, number>;
     raw_output?: string;
     error?: unknown;
+  };
+  simulation_interpretation?: {
+    algorithm?: string;
+    problem_class?: string;
+    status?: string;
+    summary?: string;
+    problem_impact?: string;
+    dominant_state?: string | null;
+    dominant_probability?: number | null;
+    distribution_shape?: string;
+    confidence?: string;
+    top_states?: Array<{
+      state: string;
+      count: number;
+      probability: number;
+    }>;
+    caveats?: string[];
   };
   nisq_warning?: string;
 };
@@ -1069,19 +1091,49 @@ export default function Home() {
                     <div style={{ color: 'rgba(255,255,255,0.62)', fontSize: '12px', marginBottom: '16px' }}>
                       Audience: {finalResult.storybook_target_audience || 'General'}
                     </div>
+                    {Array.isArray(finalResult.storybook_generation_warnings) && finalResult.storybook_generation_warnings.length > 0 && (
+                      <div
+                        style={{
+                          marginBottom: '16px',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid rgba(255, 193, 7, 0.45)',
+                          background: 'rgba(255, 193, 7, 0.12)',
+                          color: '#FFE082',
+                          fontSize: '12px',
+                          lineHeight: '1.5',
+                        }}
+                      >
+                        <strong>Storybook media warnings ({finalResult.storybook_generation_warnings.length}):</strong>{' '}
+                        {finalResult.storybook_generation_warnings.slice(0, 3).join(' | ')}
+                      </div>
+                    )}
 
                     {activeStorybookPage && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '0', borderRadius: '14px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)' }}>
                         <div style={{ background: '#1e2635', minHeight: '460px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                           {activeStorybookPage.illustration?.data ? (
-                            <img
-                              src={`data:${activeStorybookPage.illustration.mime_type || 'image/png'};base64,${activeStorybookPage.illustration.data}`}
-                              alt={`Storybook page ${activeStorybookPage.page_number || activeStorybookPageIndex + 1} illustration`}
-                              style={{ width: '100%', maxHeight: '520px', objectFit: 'cover', borderRadius: '10px' }}
-                            />
+                            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              <img
+                                src={`data:${activeStorybookPage.illustration.mime_type || 'image/png'};base64,${activeStorybookPage.illustration.data}`}
+                                alt={`Storybook page ${activeStorybookPage.page_number || activeStorybookPageIndex + 1} illustration`}
+                                style={{ width: '100%', maxHeight: '520px', objectFit: 'cover', borderRadius: '10px' }}
+                              />
+                              {(activeStorybookPage.illustration.is_placeholder || activeStorybookPage.image_error) && (
+                                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', lineHeight: '1.4' }}>
+                                  {activeStorybookPage.image_error || activeStorybookPage.illustration.source_error || 'Illustration placeholder generated due to media failure.'}
+                                  {activeStorybookPage.image_error_detail && (
+                                    <div style={{ marginTop: '4px', color: 'rgba(255,255,255,0.55)' }}>
+                                      {activeStorybookPage.image_error_detail}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           ) : (
                             <div style={{ color: 'rgba(255,255,255,0.45)', fontStyle: 'italic', fontSize: '13px' }}>
                               {activeStorybookPage.image_error || 'No page illustration generated'}
+                              {activeStorybookPage.image_error_detail ? ` (${activeStorybookPage.image_error_detail})` : ''}
                             </div>
                           )}
                         </div>
@@ -1248,6 +1300,35 @@ export default function Home() {
                     {Boolean(finalResult.simulation_results?.error) && (
                       <div>
                         <strong>Execution warning:</strong> {String(finalResult.simulation_results?.error)}
+                      </div>
+                    )}
+                    {finalResult.simulation_interpretation?.summary && (
+                      <div>
+                        <strong>Interpretation:</strong> {finalResult.simulation_interpretation.summary}
+                      </div>
+                    )}
+                    {finalResult.simulation_interpretation?.problem_impact && (
+                      <div>
+                        <strong>What this means for your problem:</strong> {finalResult.simulation_interpretation.problem_impact}
+                      </div>
+                    )}
+                    {finalResult.simulation_interpretation?.dominant_state && (
+                      <div>
+                        <strong>Dominant state:</strong> {finalResult.simulation_interpretation.dominant_state}
+                        {typeof finalResult.simulation_interpretation?.dominant_probability === 'number' && (
+                          <> ({(finalResult.simulation_interpretation.dominant_probability * 100).toFixed(2)}%)</>
+                        )}
+                      </div>
+                    )}
+                    {Array.isArray(finalResult.simulation_interpretation?.top_states) && finalResult.simulation_interpretation?.top_states.length > 0 && (
+                      <div>
+                        <strong>Top measured states:</strong>{' '}
+                        {finalResult.simulation_interpretation.top_states.map((entry) => `${entry.state}: ${(entry.probability * 100).toFixed(2)}%`).join(' | ')}
+                      </div>
+                    )}
+                    {Array.isArray(finalResult.simulation_interpretation?.caveats) && finalResult.simulation_interpretation?.caveats.length > 0 && (
+                      <div>
+                        <strong>Caveats:</strong> {finalResult.simulation_interpretation.caveats.join(' | ')}
                       </div>
                     )}
                   </div>

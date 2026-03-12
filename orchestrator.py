@@ -679,6 +679,133 @@ def _extract_histogram_from_stdout(output: str) -> Dict[str, Any]:
     return {}
 
 
+def _normalize_histogram_counts(histogram: Any) -> Dict[str, float]:
+    if not isinstance(histogram, dict):
+        return {}
+    normalized: Dict[str, float] = {}
+    for state, raw_count in histogram.items():
+        if state is None:
+            continue
+        try:
+            count = float(raw_count)
+        except (TypeError, ValueError):
+            continue
+        if count < 0:
+            continue
+        normalized[str(state)] = count
+    return normalized
+
+
+def _flatten_error(error_value: Any) -> str:
+    if isinstance(error_value, list):
+        joined = " | ".join(str(item) for item in error_value if item is not None)
+        return joined.strip()
+    if error_value is None:
+        return ""
+    return str(error_value).strip()
+
+
+def _build_simulation_interpretation(
+    user_input: str,
+    mapping: Dict[str, Any],
+    simulation_results: Dict[str, Any],
+    evaluator_report: Optional[Dict[str, Any]] = None,
+    nisq_warning: Optional[str] = None,
+) -> Dict[str, Any]:
+    mapping = mapping if isinstance(mapping, dict) else {}
+    simulation_results = simulation_results if isinstance(simulation_results, dict) else {}
+    algorithm = mapping.get("identified_algorithm", mapping.get("algorithm", "Unknown"))
+    problem_class = mapping.get("problem_class", "Unknown")
+    normalized_histogram = _normalize_histogram_counts(simulation_results.get("histogram", {}))
+    total_weight = sum(normalized_histogram.values())
+    sorted_states = sorted(normalized_histogram.items(), key=lambda item: item[1], reverse=True)
+
+    top_states: List[Dict[str, Any]] = []
+    for state, count in sorted_states[:3]:
+        probability = (count / total_weight) if total_weight > 0 else 0.0
+        top_states.append(
+            {
+                "state": state,
+                "count": int(count) if float(count).is_integer() else round(count, 6),
+                "probability": round(probability, 6),
+            }
+        )
+
+    dominant_state = top_states[0]["state"] if top_states else None
+    dominant_probability = top_states[0]["probability"] if top_states else None
+    distribution_shape = "unknown"
+    confidence = "low"
+    if dominant_probability is not None:
+        if dominant_probability >= 0.75:
+            distribution_shape = "highly_concentrated"
+            confidence = "high"
+        elif dominant_probability >= 0.5:
+            distribution_shape = "moderately_concentrated"
+            confidence = "medium"
+        else:
+            distribution_shape = "diffuse"
+            confidence = "low"
+
+    status = str(simulation_results.get("status", "UNKNOWN")).upper()
+    prompt_excerpt = (user_input or "").strip()
+    if len(prompt_excerpt) > 180:
+        prompt_excerpt = f"{prompt_excerpt[:177]}..."
+
+    if status == "COMPLETED" and dominant_state:
+        dominant_pct = round((dominant_probability or 0.0) * 100, 2)
+        summary = (
+            f"Most likely measured state is |{dominant_state}> at about {dominant_pct}% probability."
+        )
+        problem_impact = (
+            f"For your problem ({problem_class}) using {algorithm}, this state is the current top candidate "
+            "answer encoded by the circuit objective."
+        )
+        if distribution_shape == "diffuse":
+            problem_impact += " The probability mass is spread across alternatives, so the answer is not yet sharply resolved."
+    elif status == "COMPLETED":
+        summary = "Simulation completed, but no parseable measurement histogram was produced."
+        problem_impact = (
+            f"The circuit ran for your problem ({problem_class}), but there is not enough state-distribution evidence "
+            "to identify a likely answer state."
+        )
+    else:
+        summary = "Simulation did not complete successfully, so no reliable quantum outcome could be interpreted."
+        problem_impact = (
+            f"This run cannot yet resolve your request ({prompt_excerpt or 'user prompt'}) until runtime/circuit issues are fixed "
+            "and the simulation is rerun."
+        )
+
+    caveats: List[str] = []
+    flattened_error = _flatten_error(simulation_results.get("error"))
+    if flattened_error:
+        caveats.append(f"Execution issue: {flattened_error[:260]}")
+
+    if nisq_warning:
+        caveats.append(f"NISQ warning: {str(nisq_warning)[:260]}")
+
+    if isinstance(evaluator_report, dict):
+        verdict = str(evaluator_report.get("verdict", "")).upper()
+        validation_summary = str(evaluator_report.get("validation_summary", "")).strip()
+        if verdict and verdict != "PASS":
+            caveats.append(f"Evaluator verdict: {verdict}")
+        if validation_summary:
+            caveats.append(f"Evaluator note: {validation_summary[:260]}")
+
+    return {
+        "algorithm": algorithm,
+        "problem_class": problem_class,
+        "status": status,
+        "summary": summary,
+        "problem_impact": problem_impact,
+        "dominant_state": dominant_state,
+        "dominant_probability": dominant_probability,
+        "distribution_shape": distribution_shape,
+        "confidence": confidence,
+        "top_states": top_states,
+        "caveats": caveats,
+    }
+
+
 def _extract_import_roots(python_code: str) -> List[str]:
     roots = set()
     try:
@@ -895,7 +1022,12 @@ class QuantumOrchestrator:
         self.scientist = ScientistAgent()
         self.evaluator = EvaluatorAgent()
         self.media_producer = MediaProducerAgent()
-        self.max_retries = 3
+        self.max_retries = max(1, int(os.getenv("ORCHESTRATOR_MAX_RETRIES", "3")))
+        self.max_orchestration_cycles = max(
+            self.max_retries,
+            int(os.getenv("MAX_ORCHESTRATION_CYCLES", str(self.max_retries * 4))),
+        )
+        self.agent_call_timeout_sec = max(30, int(os.getenv("AGENT_CALL_TIMEOUT_SEC", "180")))
         self.session_manager = SessionManager()
 
     def _past_stage(self, current_stage: str, target_stage: str) -> bool:
@@ -925,6 +1057,23 @@ class QuantumOrchestrator:
         if label:
             event["label"] = label
         await event_callback(event)
+
+    async def _invoke_agent_with_timeout(self, agent_name: str, fn, *args) -> Dict[str, Any]:
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(fn, *args),
+                timeout=self.agent_call_timeout_sec,
+            )
+        except asyncio.TimeoutError:
+            return {"error": f"{agent_name} timed out after {self.agent_call_timeout_sec} seconds."}
+        except Exception as exc:
+            return {"error": f"{agent_name} runtime failure: {str(exc)}"}
+
+        if response is None:
+            return {"error": f"{agent_name} returned an empty response."}
+        if not isinstance(response, dict):
+            return {"error": f"{agent_name} returned unexpected type: {type(response).__name__}"}
+        return response
 
     async def run_workflow(self, user_input: str, event_callback, session_id: str = None) -> Dict[str, Any]:
         # --- SESSION SETUP ---
@@ -975,7 +1124,7 @@ class QuantumOrchestrator:
         else:
             await event_callback({"type": "progress", "agent": "Translator", "status": "Translating natural language to quantum problem mapping..."})
             await asyncio.sleep(1)
-            mapping = await asyncio.to_thread(self.translator.map_problem, user_input)
+            mapping = await self._invoke_agent_with_timeout("Translator", self.translator.map_problem, user_input)
 
             if 'error' in mapping:
                 await event_callback({"type": "error", "agent": "Translator", "status": "Translation failed", "details": mapping})
@@ -995,13 +1144,40 @@ class QuantumOrchestrator:
         _save_json(os.path.join(run_dir, "mapping.json"), mapping)
 
         # --- STEP 2-4: ARCHITECTURE & VALIDATION LOOP ---
-        attempt = session_data.get("attempt", 0) if resuming else 0
+        raw_attempt = session_data.get("attempt", 0) if resuming else 0
+        try:
+            attempt = int(raw_attempt)
+        except (TypeError, ValueError):
+            attempt = 0
+        if attempt < 0:
+            await event_callback(
+                {
+                    "type": "warning",
+                    "agent": "Orchestrator",
+                    "status": f"Invalid saved attempt ({raw_attempt}). Resetting attempt counter to 0.",
+                }
+            )
+            attempt = 0
+        if attempt > self.max_retries:
+            await event_callback(
+                {
+                    "type": "warning",
+                    "agent": "Orchestrator",
+                    "status": (
+                        f"Saved attempt ({attempt}) exceeds retry cap ({self.max_retries}). "
+                        "Capping to retry limit."
+                    ),
+                }
+            )
+            attempt = self.max_retries
+
         validated_code = None
         scientific_report = session_data.get("scientific_report") if resuming else None
         evaluator_report = session_data.get("evaluator_report") if resuming else None
         result_diagram_b64 = session_data.get("result_diagram_b64") if resuming else ""
         nisq_warning = session_data.get("nisq_warning") if resuming else None
         actual_results = session_data.get("actual_results", {}) if resuming else {}
+        simulation_interpretation = session_data.get("simulation_interpretation", {}) if resuming else {}
 
         # Determine where to resume inside the loop
         skip_architect = resuming and self._past_stage(resume_stage, "ARCHITECTED")
@@ -1014,9 +1190,25 @@ class QuantumOrchestrator:
             evaluator_report = session_data.get("evaluator_report", {})
             result_diagram_b64 = session_data.get("result_diagram_b64", "")
             actual_results = session_data.get("actual_results", {})
+            simulation_interpretation = session_data.get("simulation_interpretation", {})
             await event_callback({"type": "success", "agent": "Evaluator", "status": "[Restored] Evaluator Validation Passed.", "restored": True})
         else:
+            cycle_count = 0
             while attempt < self.max_retries:
+                cycle_count += 1
+                if cycle_count > self.max_orchestration_cycles:
+                    await event_callback(
+                        {
+                            "type": "error",
+                            "agent": "Orchestrator",
+                            "status": (
+                                "Safety stop triggered: orchestration exceeded max cycle budget "
+                                f"({self.max_orchestration_cycles})."
+                            ),
+                        }
+                    )
+                    break
+
                 attempt += 1
 
                 # --- ARCHITECT ---
@@ -1029,7 +1221,12 @@ class QuantumOrchestrator:
                     skip_scientist = False
                     await event_callback({"type": "progress", "agent": "Architect", "status": f"Architecture Generation (Attempt {attempt})..."})
                     await asyncio.sleep(1)
-                    code_package = await asyncio.to_thread(self.architect.generate_code, mapping, scientific_report)
+                    code_package = await self._invoke_agent_with_timeout(
+                        "Architect",
+                        self.architect.generate_code,
+                        mapping,
+                        scientific_report,
+                    )
                     if 'error' in code_package:
                         await event_callback({"type": "error", "agent": "Architect", "status": f"Architect error: {code_package['error']}"})
                         continue
@@ -1059,7 +1256,15 @@ class QuantumOrchestrator:
                     skip_scientist = False
                     await event_callback({"type": "progress", "agent": "Scientist", "status": "Auditing proposed quantum circuit..."})
                     await asyncio.sleep(1)
-                    scientific_report = await asyncio.to_thread(self.scientist.validate_proposal, mapping, python_code)
+                    scientific_report = await self._invoke_agent_with_timeout(
+                        "Scientist",
+                        self.scientist.validate_proposal,
+                        mapping,
+                        python_code,
+                    )
+                    if "error" in scientific_report:
+                        await event_callback({"type": "error", "agent": "Scientist", "status": f"Scientist error: {scientific_report['error']}"})
+                        continue
 
                     decision = scientific_report.get('decision', 'REJECTED')
 
@@ -1124,7 +1329,19 @@ class QuantumOrchestrator:
                     actual_results["error"] = str(e)
                     await event_callback({"type": "warning", "agent": "Environment", "status": f"Code run hit error: {e}"})
 
-                evaluator_report = await asyncio.to_thread(self.evaluator.evaluate_simulation, python_code, actual_results)
+                evaluator_report = await self._invoke_agent_with_timeout(
+                    "Evaluator",
+                    self.evaluator.evaluate_simulation,
+                    python_code,
+                    actual_results,
+                )
+                if "error" in evaluator_report:
+                    await event_callback({"type": "error", "agent": "Evaluator", "status": f"Evaluator error: {evaluator_report['error']}"})
+                    scientific_report = {
+                        "decision": "REJECTED",
+                        "architect_feedback": evaluator_report.get("error", "Evaluator failed to return a usable verdict."),
+                    }
+                    continue
                 _save_json(os.path.join(run_dir, f"simulation_results_attempt_{attempt}.json"), actual_results)
                 _save_json(os.path.join(run_dir, f"evaluator_report_attempt_{attempt}.json"), evaluator_report)
 
@@ -1132,6 +1349,20 @@ class QuantumOrchestrator:
                 if verdict == 'PASS':
                     validated_code = code_package
                     await event_callback({"type": "success", "agent": "Evaluator", "status": "Evaluator Validation Passed."})
+                    simulation_interpretation = _build_simulation_interpretation(
+                        user_input=user_input,
+                        mapping=mapping,
+                        simulation_results=actual_results,
+                        evaluator_report=evaluator_report,
+                        nisq_warning=nisq_warning,
+                    )
+                    await event_callback(
+                        {
+                            "type": "success",
+                            "agent": "Orchestrator",
+                            "status": f"Simulation interpretation: {simulation_interpretation.get('summary', '')}",
+                        }
+                    )
                     
                     # Generate Result Diagram if histogram exists
                     if actual_results.get("histogram"):
@@ -1156,6 +1387,7 @@ class QuantumOrchestrator:
                         "code_package": code_package,
                         "result_diagram_b64": result_diagram_b64,
                         "actual_results": actual_results,
+                        "simulation_interpretation": simulation_interpretation,
                     }, attempt=attempt)
                     break
                 else:
@@ -1165,8 +1397,31 @@ class QuantumOrchestrator:
                     scientific_report = {"decision": "REJECTED", "architect_feedback": fix_instructions}
 
         if not validated_code:
-            await event_callback({"type": "error", "agent": "Orchestrator", "status": "Could not generate a scientifically valid circuit after 3 attempts."})
-            return {"error": "Could not generate a scientifically valid circuit after 3 attempts."}
+            await event_callback(
+                {
+                    "type": "error",
+                    "agent": "Orchestrator",
+                    "status": (
+                        "Could not generate a scientifically valid circuit "
+                        f"after {self.max_retries} attempts."
+                    ),
+                }
+            )
+            return {
+                "error": (
+                    "Could not generate a scientifically valid circuit "
+                    f"after {self.max_retries} attempts."
+                )
+            }
+
+        if not simulation_interpretation:
+            simulation_interpretation = _build_simulation_interpretation(
+                user_input=user_input,
+                mapping=mapping,
+                simulation_results=actual_results,
+                evaluator_report=evaluator_report,
+                nisq_warning=nisq_warning,
+            )
 
         # --- STEP 5: MEDIA PRODUCTION ---
         python_code = validated_code.get("python_code", validated_code.get("code", ""))
@@ -1182,8 +1437,10 @@ class QuantumOrchestrator:
         storybook_target_audience = ""
         storybook_art_direction = ""
         storybook_pages: List[Dict[str, Any]] = []
+        generation_warnings: List[str] = []
 
-        storybook_response = await asyncio.to_thread(
+        storybook_response = await self._invoke_agent_with_timeout(
+            "MediaProducer",
             self.media_producer.generate_storybook,
             mapping,
             python_code,
@@ -1209,9 +1466,14 @@ class QuantumOrchestrator:
             if isinstance(response_pages, list):
                 storybook_pages = response_pages
 
-            generation_warnings = storybook_response.get("generation_warnings", [])
+            raw_generation_warnings = storybook_response.get("generation_warnings", [])
+            if isinstance(raw_generation_warnings, list):
+                generation_warnings = [str(item) for item in raw_generation_warnings if str(item).strip()]
+            elif raw_generation_warnings:
+                generation_warnings = [str(raw_generation_warnings)]
+
             if generation_warnings:
-                warning_count = len(generation_warnings) if isinstance(generation_warnings, list) else 0
+                warning_count = len(generation_warnings)
                 await event_callback(
                     {
                         "type": "warning",
@@ -1296,7 +1558,9 @@ class QuantumOrchestrator:
             "storybook_art_direction": storybook_art_direction,
             "storybook_pages": storybook_pages,
             "storybook_page_count": len(storybook_pages),
+            "storybook_generation_warnings": generation_warnings,
             "simulation_results": actual_results,
+            "simulation_interpretation": simulation_interpretation,
             "nisq_warning": nisq_warning,
             "evaluator_report": evaluator_report,
         }
@@ -1335,6 +1599,21 @@ class QuantumOrchestrator:
                         os.path.join(run_dir, f"{page_prefix}_audio{_ext_from_mime(page_audio_mime)}"),
                         page_audio.get("data", ""),
                     )
+
+                page_error_report: Dict[str, Any] = {}
+                if page.get("image_error"):
+                    page_error_report["image_error"] = page.get("image_error")
+                if page.get("image_error_detail"):
+                    page_error_report["image_error_detail"] = page.get("image_error_detail")
+                if page.get("audio_error"):
+                    page_error_report["audio_error"] = page.get("audio_error")
+                if page.get("audio_error_detail"):
+                    page_error_report["audio_error_detail"] = page.get("audio_error_detail")
+                if page_error_report:
+                    _save_json(os.path.join(run_dir, f"{page_prefix}_errors.json"), page_error_report)
+
+        if generation_warnings:
+            _save_json(os.path.join(run_dir, "storybook_generation_warnings.json"), generation_warnings)
         if RUN_HISTORY_GCS_ENABLED:
             upload_result = await asyncio.to_thread(_upload_run_dir_to_gcs, session_id, run_dir)
             if not upload_result.get("ok"):

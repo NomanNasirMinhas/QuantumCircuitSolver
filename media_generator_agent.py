@@ -48,6 +48,10 @@ Style constraints:
 - Avoid generic filler and avoid inventing unsupported APIs.
 """
 
+FALLBACK_PLACEHOLDER_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBAp8z2QAAAABJRU5ErkJggg=="
+)
+
 
 class MediaProducerAgent:
     def __init__(self):
@@ -153,6 +157,55 @@ class MediaProducerAgent:
         if mime in {"audio/wav", "audio/x-wav", "audio/wave", "audio/mpeg", "audio/mp3", "audio/ogg"}:
             return audio_bytes, "audio/mpeg" if mime == "audio/mp3" else mime
         return audio_bytes, "audio/wav"
+
+    @staticmethod
+    def _placeholder_image_b64(page_number: Any, page_title: str, error: str, detail: str = "") -> str:
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            from textwrap import wrap
+
+            title = str(page_title or f"Page {page_number}").strip()
+            reason = str(error or "image generation failed").strip()
+            detail_text = str(detail or "").strip()
+
+            lines: List[str] = [
+                f"Storybook Page {page_number} Illustration Unavailable",
+                title,
+                f"Reason: {reason}",
+            ]
+            if detail_text:
+                lines.append("Details:")
+                lines.extend(wrap(detail_text, width=72)[:8])
+
+            figure = plt.figure(figsize=(10, 7), dpi=120)
+            figure.patch.set_facecolor("#141d2b")
+            axis = figure.add_axes([0, 0, 1, 1])
+            axis.set_axis_off()
+
+            y = 0.92
+            for index, line in enumerate(lines):
+                color = "#f3f4f6" if index == 0 else "#cbd5e1"
+                fontsize = 18 if index == 0 else 12
+                axis.text(
+                    0.05,
+                    y - index * 0.08,
+                    line,
+                    color=color,
+                    fontsize=fontsize,
+                    ha="left",
+                    va="top",
+                    wrap=True,
+                )
+
+            buffer = io.BytesIO()
+            figure.savefig(buffer, format="png", bbox_inches="tight", pad_inches=0.3, facecolor=figure.get_facecolor())
+            plt.close(figure)
+            return base64.b64encode(buffer.getvalue()).decode("utf-8")
+        except Exception:
+            return FALLBACK_PLACEHOLDER_PNG_BASE64
 
     @staticmethod
     def _normalize_storybook_outline(raw_outline: dict, page_count: int) -> dict:
@@ -336,15 +389,37 @@ class MediaProducerAgent:
                 if image_prompt:
                     image_response = self.generate_page_image(image_prompt)
                     if image_response.get("error"):
-                        page_payload["image_error"] = image_response.get("error")
-                        generation_warnings.append(
-                            f"Page {page_number} image generation failed: {image_response.get('error')}"
-                        )
+                        image_error = str(image_response.get("error", "Imagen page generation failed")).strip()
+                        details_raw = image_response.get("details", [])
+                        if isinstance(details_raw, list):
+                            image_error_detail = " | ".join(str(item) for item in details_raw if item).strip()
+                        else:
+                            image_error_detail = str(details_raw or "").strip()
+                        page_payload["image_error"] = image_error
+                        if image_error_detail:
+                            page_payload["image_error_detail"] = image_error_detail[:1200]
+                        page_payload["illustration"] = {
+                            "model": "local-placeholder",
+                            "mime_type": "image/png",
+                            "data": self._placeholder_image_b64(
+                                page_number,
+                                str(page_title),
+                                image_error,
+                                image_error_detail,
+                            ),
+                            "is_placeholder": True,
+                            "source_error": image_error,
+                        }
+                        warning = f"Page {page_number} image generation failed: {image_error}"
+                        if image_error_detail:
+                            warning = f"{warning} ({image_error_detail[:240]})"
+                        generation_warnings.append(warning)
                     else:
                         page_payload["illustration"] = {
                             "model": image_response.get("model", ""),
                             "mime_type": image_response.get("mime_type", "image/png"),
                             "data": image_response.get("data", ""),
+                            "is_placeholder": False,
                         }
 
             if include_page_audio:
@@ -352,10 +427,19 @@ class MediaProducerAgent:
                 if narration_script:
                     audio_response = self.generate_page_audio(mapping, narration_script)
                     if audio_response.get("error"):
-                        page_payload["audio_error"] = audio_response.get("error")
-                        generation_warnings.append(
-                            f"Page {page_number} audio generation failed: {audio_response.get('error')}"
-                        )
+                        audio_error = str(audio_response.get("error", "Gemini page TTS generation failed")).strip()
+                        audio_details_raw = audio_response.get("details", [])
+                        if isinstance(audio_details_raw, list):
+                            audio_error_detail = " | ".join(str(item) for item in audio_details_raw if item).strip()
+                        else:
+                            audio_error_detail = str(audio_details_raw or "").strip()
+                        page_payload["audio_error"] = audio_error
+                        if audio_error_detail:
+                            page_payload["audio_error_detail"] = audio_error_detail[:1200]
+                        warning = f"Page {page_number} audio generation failed: {audio_error}"
+                        if audio_error_detail:
+                            warning = f"{warning} ({audio_error_detail[:240]})"
+                        generation_warnings.append(warning)
                     else:
                         page_payload["audio"] = {
                             "model": audio_response.get("model", ""),
