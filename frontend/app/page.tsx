@@ -200,12 +200,6 @@ export default function Home() {
   const currentSessionIdRef = useRef<string | null>(null);
   const currentAccessTokenRef = useRef('');
   const storybookPages = normalizeStorybookPages(finalResult);
-  const hasStorybookPanel = Boolean(finalResult) && (
-    storybookPages.length > 0
-    || Boolean(finalResult?.storybook_title)
-    || Boolean(finalResult?.storybook_summary)
-    || (Array.isArray(finalResult?.storybook_generation_warnings) && finalResult.storybook_generation_warnings.length > 0)
-  );
   const activeStorybookPageIndex = storybookPages.length > 0
     ? Math.min(storybookPageIndex, storybookPages.length - 1)
     : 0;
@@ -1038,15 +1032,14 @@ export default function Home() {
                   </div>
                 )}
 
-                {hasStorybookPanel && (
+                {storybookPages.length > 0 && (
                   <div style={{ background: 'rgba(20, 24, 34, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Play size={20} color="#00E5FF" />
                         <h2 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 600, fontFamily: 'monospace' }}>Storyline Book</h2>
                       </div>
-                      {storybookPages.length > 0 ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <button
                           type="button"
                           onClick={() => setStorybookPageIndex((prev) => Math.max(0, prev - 1))}
@@ -1086,12 +1079,7 @@ export default function Home() {
                         >
                           <ChevronRight size={16} />
                         </button>
-                        </div>
-                      ) : (
-                        <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px' }}>
-                          No story pages available
-                        </div>
-                      )}
+                      </div>
                     </div>
 
                     {finalResult.storybook_title && (
@@ -1121,7 +1109,7 @@ export default function Home() {
                       </div>
                     )}
 
-                    {activeStorybookPage ? (
+                    {activeStorybookPage && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '0', borderRadius: '14px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)' }}>
                         <div style={{ background: '#1e2635', minHeight: '460px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                           {activeStorybookPage.illustration?.data ? (
@@ -1186,10 +1174,6 @@ export default function Home() {
                             )}
                           </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div style={{ padding: '16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(0,0,0,0.25)', color: 'rgba(255,255,255,0.8)', fontSize: '13px', lineHeight: '1.6' }}>
-                        Storyline pages were not returned for this run. Check the media warnings above. The backend now supports fallback pages for new runs.
                       </div>
                     )}
                   </div>

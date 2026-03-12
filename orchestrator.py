@@ -806,85 +806,6 @@ def _build_simulation_interpretation(
     }
 
 
-def _build_fallback_storybook_pages(
-    mapping: Dict[str, Any],
-    python_code: str,
-    simulation_interpretation: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    mapping = mapping if isinstance(mapping, dict) else {}
-    simulation_interpretation = simulation_interpretation if isinstance(simulation_interpretation, dict) else {}
-
-    algorithm = mapping.get("identified_algorithm", mapping.get("algorithm", "Unknown"))
-    problem_class = mapping.get("problem_class", "Unknown")
-    context = str(mapping.get("story_explanation", "") or "").strip()
-    justification = str(mapping.get("mathematical_justification", "") or "").strip()
-    interpretation_summary = str(simulation_interpretation.get("summary", "") or "").strip()
-    interpretation_impact = str(simulation_interpretation.get("problem_impact", "") or "").strip()
-
-    code_lines = (python_code or "").splitlines()
-    code_excerpt = "\n".join(code_lines[:40]).strip()
-    if len(code_lines) > 40:
-        code_excerpt += "\n# ... truncated ..."
-
-    page_1_text_parts = [
-        f"### Problem Class\n{problem_class}",
-        f"### Selected Quantum Algorithm\n{algorithm}",
-    ]
-    if context:
-        page_1_text_parts.append(f"### User Problem Context\n{context}")
-    if justification:
-        page_1_text_parts.append(f"### Why This Mapping Was Chosen\n{justification}")
-
-    page_2_text_parts = []
-    if interpretation_summary:
-        page_2_text_parts.append(f"### Simulation Interpretation\n{interpretation_summary}")
-    if interpretation_impact:
-        page_2_text_parts.append(f"### What This Means\n{interpretation_impact}")
-    if code_excerpt:
-        page_2_text_parts.append(f"### Circuit Code Excerpt\n```python\n{code_excerpt}\n```")
-
-    fallback_pages: List[Dict[str, Any]] = [
-        {
-            "page_number": 1,
-            "title": "Problem Mapping Summary",
-            "learning_objective": "Understand how the user problem maps to a quantum formulation.",
-            "algorithm_focus": algorithm,
-            "code_focus": "Problem-to-algorithm mapping",
-            "page_text": "\n\n".join(page_1_text_parts).strip(),
-            "key_takeaways": [
-                f"Problem class: {problem_class}",
-                f"Chosen algorithm: {algorithm}",
-                "Fallback page generated because storybook media generation failed.",
-            ],
-            "illustration_prompt": "",
-            "narration_script": "This is a fallback story page generated after storybook media generation failed.",
-            "image_error": "No illustration generated (fallback mode).",
-            "audio_error": "No narration generated (fallback mode).",
-        },
-        {
-            "page_number": 2,
-            "title": "Circuit Outcome Interpretation",
-            "learning_objective": "Understand what the simulation output means for the user problem.",
-            "algorithm_focus": algorithm,
-            "code_focus": "Simulation interpretation and implementation snapshot",
-            "page_text": (
-                "\n\n".join(page_2_text_parts).strip()
-                or "Simulation interpretation was unavailable; please review evaluator notes and rerun."
-            ),
-            "key_takeaways": [
-                "Fallback page keeps workflow output usable even when storybook generation fails.",
-                "Simulation interpretation is included in the final package.",
-            ],
-            "illustration_prompt": "",
-            "narration_script": "This is a fallback interpretation page generated without media assets.",
-            "image_error": "No illustration generated (fallback mode).",
-            "audio_error": "No narration generated (fallback mode).",
-        },
-    ]
-
-    return fallback_pages
-
-
 def _extract_import_roots(python_code: str) -> List[str]:
     roots = set()
     try:
@@ -1517,7 +1438,6 @@ class QuantumOrchestrator:
         storybook_art_direction = ""
         storybook_pages: List[Dict[str, Any]] = []
         generation_warnings: List[str] = []
-        storybook_error = ""
 
         storybook_response = await self._invoke_agent_with_timeout(
             "MediaProducer",
@@ -1530,13 +1450,11 @@ class QuantumOrchestrator:
         )
         _save_json(os.path.join(run_dir, "storybook_response.json"), storybook_response)
         if storybook_response.get("error"):
-            storybook_error = str(storybook_response.get("error", "Storyline generation failed"))
-            generation_warnings.append(f"Storyline generation failed: {storybook_error}")
             await event_callback(
                 {
                     "type": "warning",
                     "agent": "MediaProducer",
-                    "status": f"Storyline generation failed: {storybook_error}",
+                    "status": f"Storyline generation failed: {storybook_response['error']}",
                 }
             )
         else:
@@ -1597,38 +1515,6 @@ class QuantumOrchestrator:
                             mime_type=page_audio_mime,
                             label=f"Storybook Page {page_number}: {page_title} (audio)",
                         )
-
-        if not storybook_pages:
-            storybook_pages = _build_fallback_storybook_pages(
-                mapping=mapping,
-                python_code=python_code,
-                simulation_interpretation=simulation_interpretation,
-            )
-            if not storybook_title:
-                storybook_title = "Fallback Storyline Book"
-            if not storybook_summary:
-                if storybook_error:
-                    storybook_summary = (
-                        "Primary storybook generation failed and fallback pages were created. "
-                        f"Reason: {storybook_error}"
-                    )
-                else:
-                    storybook_summary = (
-                        "No storybook pages were returned by media generation, so fallback pages were created."
-                    )
-            if not storybook_target_audience:
-                storybook_target_audience = "General"
-            if not storybook_art_direction:
-                storybook_art_direction = "Text-first fallback mode"
-
-            generation_warnings.append("Fallback storybook pages were generated because no storybook pages were available.")
-            await event_callback(
-                {
-                    "type": "warning",
-                    "agent": "MediaProducer",
-                    "status": "Using fallback storybook pages (text-only) because media generation returned no pages.",
-                }
-            )
 
         try:
             circuit_b64 = await asyncio.to_thread(_render_circuit_diagram_b64, python_code)
