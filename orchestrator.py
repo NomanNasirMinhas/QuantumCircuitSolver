@@ -61,7 +61,7 @@ RUN_HISTORY_GCS_ENABLED = bool(RUN_HISTORY_GCS_BUCKET and storage is not None)
 STORYBOOK_PAGE_COUNT = max(2, min(int(os.getenv("STORYBOOK_PAGE_COUNT", "8")), 16))
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SAFE_PIP_PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
-RUNTIME_PIP_INSTALL_TIMEOUT_SEC = int(os.getenv("RUNTIME_PIP_INSTALL_TIMEOUT_SEC", "300"))
+RUNTIME_PIP_INSTALL_TIMEOUT_SEC = int(os.getenv("RUNTIME_PIP_INSTALL_TIMEOUT_SEC", "0"))
 AUTO_INSTALL_UNMAPPED_IMPORTS = os.getenv("AUTO_INSTALL_UNMAPPED_IMPORTS", "true").strip().lower() in (
     "1",
     "true",
@@ -853,13 +853,15 @@ def _pip_install(packages: List[str]) -> Dict[str, Any]:
         return {"ok": True, "stdout": "", "stderr": ""}
 
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--no-cache-dir", *packages],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=RUNTIME_PIP_INSTALL_TIMEOUT_SEC,
-        )
+        command = [sys.executable, "-m", "pip", "install", "--no-cache-dir", *packages]
+        run_kwargs: Dict[str, Any] = {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+        }
+        if RUNTIME_PIP_INSTALL_TIMEOUT_SEC > 0:
+            run_kwargs["timeout"] = RUNTIME_PIP_INSTALL_TIMEOUT_SEC
+        result = subprocess.run(command, **run_kwargs)
         return {
             "ok": result.returncode == 0,
             "stdout": (result.stdout or "").strip(),
@@ -929,7 +931,7 @@ def _ensure_generated_code_dependencies(python_code: str) -> Dict[str, Any]:
     }
 
 
-def _simulate_python_code(python_code: str, timeout_sec: int = 60) -> Dict[str, Any]:
+def _simulate_python_code(python_code: str, timeout_sec: Optional[int] = None) -> Dict[str, Any]:
     actual_results: Dict[str, Any] = {"status": "FAILED", "histogram": {}}
     dependency_report = _ensure_generated_code_dependencies(python_code)
     actual_results["dependency_report"] = dependency_report
@@ -938,14 +940,15 @@ def _simulate_python_code(python_code: str, timeout_sec: int = 60) -> Dict[str, 
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(python_code)
 
-        result = subprocess.run(
-            [sys.executable, script_path],
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            encoding="utf-8",
-            cwd=workdir,
-        )
+        run_kwargs: Dict[str, Any] = {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "cwd": workdir,
+        }
+        if timeout_sec and timeout_sec > 0:
+            run_kwargs["timeout"] = timeout_sec
+        result = subprocess.run([sys.executable, script_path], **run_kwargs)
 
         if result.returncode == 0:
             actual_results["status"] = "COMPLETED"
@@ -993,19 +996,20 @@ def _generate_histogram_diagram_b64(histogram: Dict[str, Any]) -> str:
             return base64.b64encode(f.read()).decode("utf-8")
 
 
-def _render_circuit_diagram_b64(python_code: str, timeout_sec: int = 60) -> str:
+def _render_circuit_diagram_b64(python_code: str, timeout_sec: Optional[int] = None) -> str:
     _ensure_generated_code_dependencies(python_code)
     with tempfile.TemporaryDirectory(prefix="qcs_draw_") as workdir:
         script_path = os.path.join(workdir, "temp_circuit_draw.py")
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(python_code)
 
-        subprocess.run(
-            [sys.executable, script_path],
-            capture_output=True,
-            timeout=timeout_sec,
-            cwd=workdir,
-        )
+        run_kwargs: Dict[str, Any] = {
+            "capture_output": True,
+            "cwd": workdir,
+        }
+        if timeout_sec and timeout_sec > 0:
+            run_kwargs["timeout"] = timeout_sec
+        subprocess.run([sys.executable, script_path], **run_kwargs)
 
         circuit_path = os.path.join(workdir, "circuit.png")
         if not os.path.exists(circuit_path):
@@ -1027,7 +1031,6 @@ class QuantumOrchestrator:
             self.max_retries,
             int(os.getenv("MAX_ORCHESTRATION_CYCLES", str(self.max_retries * 4))),
         )
-        self.agent_call_timeout_sec = max(30, int(os.getenv("AGENT_CALL_TIMEOUT_SEC", "180")))
         self.session_manager = SessionManager()
 
     def _past_stage(self, current_stage: str, target_stage: str) -> bool:
@@ -1058,14 +1061,15 @@ class QuantumOrchestrator:
             event["label"] = label
         await event_callback(event)
 
-    async def _invoke_agent_with_timeout(self, agent_name: str, fn, *args) -> Dict[str, Any]:
+    async def _invoke_agent_with_timeout(
+        self,
+        agent_name: str,
+        fn,
+        *args,
+        timeout_sec: Optional[int] = None,
+    ) -> Dict[str, Any]:
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(fn, *args),
-                timeout=self.agent_call_timeout_sec,
-            )
-        except asyncio.TimeoutError:
-            return {"error": f"{agent_name} timed out after {self.agent_call_timeout_sec} seconds."}
+            response = await asyncio.to_thread(fn, *args)
         except Exception as exc:
             return {"error": f"{agent_name} runtime failure: {str(exc)}"}
 
@@ -1457,6 +1461,49 @@ class QuantumOrchestrator:
                     "status": f"Storyline generation failed: {storybook_response['error']}",
                 }
             )
+            generation_warnings.append(f"Storyline generation failed: {storybook_response['error']}")
+
+            # Retry quickly with text-only pages so Storyline Book is still available.
+            text_only_response = await self._invoke_agent_with_timeout(
+                "MediaProducer",
+                self.media_producer.generate_storybook,
+                mapping,
+                python_code,
+                STORYBOOK_PAGE_COUNT,
+                False,
+                False,
+            )
+            _save_json(os.path.join(run_dir, "storybook_response_text_only.json"), text_only_response)
+
+            if text_only_response.get("error"):
+                generation_warnings.append(
+                    f"Text-only storybook retry failed: {text_only_response.get('error', 'unknown error')}"
+                )
+            else:
+                storybook_title = text_only_response.get("title", "")
+                storybook_summary = text_only_response.get("summary", "")
+                storybook_target_audience = text_only_response.get("target_audience", "")
+                storybook_art_direction = text_only_response.get("art_direction", "")
+                response_pages = text_only_response.get("pages", [])
+                if isinstance(response_pages, list):
+                    storybook_pages = response_pages
+                raw_text_only_warnings = text_only_response.get("generation_warnings", [])
+                if isinstance(raw_text_only_warnings, list):
+                    generation_warnings.extend(
+                        str(item) for item in raw_text_only_warnings if str(item).strip()
+                    )
+                elif raw_text_only_warnings:
+                    generation_warnings.append(str(raw_text_only_warnings))
+                generation_warnings.append(
+                    "Primary media generation failed; using text-only storybook pages for this run."
+                )
+                await event_callback(
+                    {
+                        "type": "warning",
+                        "agent": "MediaProducer",
+                        "status": "Using text-only storybook fallback (no page image/audio) for this run.",
+                    }
+                )
         else:
             storybook_title = storybook_response.get("title", "")
             storybook_summary = storybook_response.get("summary", "")
